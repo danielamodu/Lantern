@@ -1,0 +1,178 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme {
+  /* Redefining existing theme tokens to adapt to our grayscale palette */
+  --color-sky-wash: #0A0A0A;
+  --color-paper-white: #1A1A1A;
+  --color-cloud-veil: #111111;
+  --color-pure-white: #F2F2F0;
+  --color-midnight-ink: #F2F2F0;
+  --color-pressed-charcoal: #3A3A3A;
+  --color-stone: #8A8A8A;
+  --color-fog: #8A8A8A;
+  --color-cornflower: #8A8A8A;
+  --color-tangerine: #8A8A8A;
+  --color-amethyst: #8A8A8A;
+  --color-mustard: #8A8A8A;
+  --color-signal-blue: #8A8A8A;
+  --color-deep-cobalt: #F2F2F0;
+  --color-morning-tint: #1A1A1A;
+  --color-lilac-mist: #1A1A1A;
+  --color-sprout: #1A1A1A;
+  --color-brand-purple: #8A8A8A;
+
+  /* Typography */
+  --font-aeonik: var(--font-mono);
+  --font-geist: var(--font-mono);
+  --font-mono: var(--font-mono);
+  --font-serif: var(--font-serif);
+
+  /* Radius overrides - set all to 0px */
+  --radius-lg: 0px;
+  --radius-2xl: 0px;
+  --radius-3xl: 0px;
+  --radius-3xl-2: 0px;
+  --radius-3xl-3: 0px;
+  --radius-full: 0px;
+
+  /* Shadow overrides - set all to none */
+  --shadow-lg: none;
+  --shadow-subtle: none;
+  --shadow-inner: none;
+  --shadow-2xl: none;
+  --shadow-sm: none;
+}
+
+@theme inline {
+  --font-heading: var(--font-mono);
+  --font-sans: var(--font-mono);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  --radius-sm: 0px;
+  --radius-md: 0px;
+  --radius-lg: 0px;
+  --radius-xl: 0px;
+  --radius-2xl: 0px;
+  --radius-3xl: 0px;
+  --radius-4xl: 0px;
+}
+
+:root {
+  --background: #0A0A0A;
+  --foreground: #F2F2F0;
+  --card: #1A1A1A;
+  --card-foreground: #F2F2F0;
+  --popover: #1A1A1A;
+  --popover-foreground: #F2F2F0;
+  --primary: #F2F2F0;
+  --primary-foreground: #0A0A0A;
+  --secondary: #3A3A3A;
+  --secondary-foreground: #F2F2F0;
+  --muted: #1A1A1A;
+  --muted-foreground: #8A8A8A;
+  --accent: #C41E1E;
+  --accent-foreground: #F2F2F0;
+  --destructive: #C41E1E;
+  --destructive-foreground: #F2F2F0;
+  --border: #3A3A3A;
+  --input: #3A3A3A;
+  --ring: #8A8A8A;
+  --radius: 0px;
+  --sidebar: #1A1A1A;
+  --sidebar-foreground: #F2F2F0;
+  --sidebar-primary: #F2F2F0;
+  --sidebar-primary-foreground: #0A0A0A;
+  --sidebar-accent: #3A3A3A;
+  --sidebar-accent-foreground: #F2F2F0;
+  --sidebar-border: #3A3A3A;
+  --sidebar-ring: #8A8A8A;
+}
+
+.dark {
+  --background: #0A0A0A;
+  --foreground: #F2F2F0;
+  --card: #1A1A1A;
+  --card-foreground: #F2F2F0;
+  --popover: #1A1A1A;
+  --popover-foreground: #F2F2F0;
+  --primary: #F2F2F0;
+  --primary-foreground: #0A0A0A;
+  --secondary: #3A3A3A;
+  --secondary-foreground: #F2F2F0;
+  --muted: #1A1A1A;
+  --muted-foreground: #8A8A8A;
+  --accent: #C41E1E;
+  --accent-foreground: #F2F2F0;
+  --destructive: #C41E1E;
+  --destructive-foreground: #F2F2F0;
+  --border: #3A3A3A;
+  --input: #3A3A3A;
+  --ring: #8A8A8A;
+  --sidebar: #1A1A1A;
+  --sidebar-foreground: #F2F2F0;
+  --sidebar-primary: #F2F2F0;
+  --sidebar-primary-foreground: #0A0A0A;
+  --sidebar-accent: #3A3A3A;
+  --sidebar-accent-foreground: #F2F2F0;
+  --sidebar-border: #3A3A3A;
+  --sidebar-ring: #8A8A8A;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+    border-radius: 0px !important;
+    box-shadow: none !important;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family: var(--font-mono);
+  }
+  html {
+    @apply font-mono;
+    background-color: #0A0A0A;
+  }
+  
+  /* Scrollbar styles to match the dark monospace theme */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: #0A0A0A;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #3A3A3A;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #8A8A8A;
+  }
+}
