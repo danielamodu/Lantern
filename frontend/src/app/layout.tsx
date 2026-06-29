@@ -18,6 +18,14 @@ const newsreader = Newsreader({
 export const metadata: Metadata = {
   title: "Lantern — Private RWA ZK Settlement",
   description: "Verify face-value compliance of tokenized RWAs on Stellar privately on-chain.",
+  icons: {
+    icon: [
+      { url: "/icon.png", type: "image/png" },
+    ],
+    apple: [
+      { url: "/icon.png", type: "image/png" },
+    ],
+  },
 };
 
 export default function RootLayout({

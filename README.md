@@ -1,4 +1,4 @@
-# Lantern: Institutional Private RWA Registry & Settlement on Stellar
+# Lantern: Private RWA Registry & ZK Settlement on Stellar
 
 Lantern implements a load-bearing, production-grade **Zero-Knowledge Proof (ZKP)** private settlement and **selective disclosure** mechanism for tokenized Real-World Assets (RWAs) on the Stellar Testnet. 
 
@@ -21,7 +21,7 @@ sequenceDiagram
 
     User->>FE: Connect Freighter Wallet
     FE->>BE: Generate Ephemeral View Keys
-    User->>FE: Select Asset & compliance Policy
+    User->>FE: Select Asset & Compliance Policy
     FE->>FE: Generate Groth16 Proof (Amount vs Face Value)
     FE->>FE: Encrypt Amount using Auditor Public View Key (ECIES)
     FE->>BE: Request Unsigned Transaction XDR
@@ -30,29 +30,34 @@ sequenceDiagram
     BE-->>FE: Return Unsigned simulated XDR
     FE->>Wallet: Request Signature (freighter-api)
     Wallet-->>FE: Return Signed XDR
-    FE->>BE: Post Signed XDR for submission
-    BE->>Ledger: Submit to Horizon RPC
-    Ledger-->>BE: Tx Confirmed & Event Emitted (Ciphertext + Proof)
-    BE-->>FE: Return Transaction Hash
-    Note over User, Ledger: Anyone can see the event. Only View Key holder can decrypt!
+    FE->>Wallet: Submits signed transaction to Horizon Testnet
+    Wallet-->>FE: Confirm transaction hash committed
 ```
 
 ---
 
 ## 🔑 Key Capabilities
 
-1.  **Zero-Knowledge Compliance Engine (`Circom + Groth16`):**
+1.  **On-Chain RWA Issuance Portal:**
+    *   Dynamic asset minting on the Stellar ledger via the contract's `mint_asset` function.
+    *   Uses a **hybrid execution flow**: falls back to WSL CLI locally using deployer keys, or uses a `DEPLOYER_SECRET` environment variable for direct, native Soroban transaction building and signing when deployed in cloud environments.
+2.  **Secondary Market Discount Yield Slider:**
+    *   Mitigates metadata leakage attacks by decoupling public par values from private settlement amounts.
+    *   Toggles between **Par Value** and **Secondary Discount** with a live range slider (0% to 15%) that recalculates the settlement values and proofs in real-time.
+3.  **Zero-Knowledge Compliance Engine (`Circom + Groth16`):**
     *   Proves that the private transaction value matches the locked RWA face value.
     *   Verifies set-membership and inequality compliance constraints on-chain using native Soroban pairing operations.
-2.  **ECIES On-Chain Event Storage:**
+4.  **ECIES On-Chain Event Storage:**
     *   Uses a hybrid **ECDH (secp256r1) + AES-256-GCM** scheme to encrypt private ledger metadata using the auditor's Public View Key.
     *   Emits the ciphertext directly on-chain as a Soroban ledger event, binding the audit trail permanently to the transaction.
-3.  **Two-Phase Freighter Wallet Signing:**
-    *   Bypasses custodial backend signing for settlements.
-    *   The backend simulates the contract invocation dynamically using the `--build-only` flag, returning an unsigned simulated XDR.
-    *   The user's Freighter extension signs the transaction on-client, and it is submitted directly to the Horizon Testnet.
-4.  **Automatic Friendbot Funding:**
-    *   To streamline testing, connecting a fresh Freighter wallet automatically triggers Friendbot to fund the address with testnet XLM.
+5.  **On-Chain Maturity & Redemption Flow:**
+    *   Allows investors to cash out settled assets at maturity.
+    *   Constructs a native Stellar payment transaction for the face value from the investor to the issuer (signed via Freighter and submitted to Horizon), confirming RWA retirement on-ledger.
+6.  **Live On-Chain Status Synchronization:**
+    *   On page load, the frontend executes a batch query to the Soroban RPC contract to fetch the real, live state of all assets.
+    *   Assets already settled on-chain are marked as `Settled` instantly and display their respective redemption triggers.
+7.  **Descriptive Compliance Error Parser:**
+    *   Intercepts contract execution failures and parses error codes directly (e.g. mapping code `#102` to a user-friendly *"Asset already settled on-chain"* warning).
 
 ---
 
@@ -72,8 +77,11 @@ sequenceDiagram
 │
 ├── frontend/                       # Next.js App Router Frontend
 │   ├── src/app/
-│   │   ├── page.tsx                # High-fidelity Geniestudio Landing Page
-│   │   └── app/page.tsx            # Compliance console and settlement dashboard
+│   │   ├── page.tsx                # Geniestudio Landing Page
+│   │   ├── app/page.tsx            # Compliance console and settlement dashboard
+│   │   ├── api/assets/sync/        # Batch on-chain status sync endpoint
+│   │   ├── api/mint/               # On-chain asset minting endpoint (native & CLI hybrid)
+│   │   ├── api/redeem/prepare/     # On-chain redemption transaction constructor
 │   │   └── api/settle/route.ts     # Two-phase transaction simulation & Horizon submitter
 │   └── package.json
 │
@@ -116,12 +124,6 @@ You can trigger a mock settlement simulation directly from your terminal:
 cd src/utils
 node run_onchain_settlement.js
 ```
-This script executes:
-1.  Auditor view keypair generation.
-2.  ECDH key exchange and AES-GCM encryption of the asset price.
-3.   Soroban RPC call to mint the asset on-chain.
-4.  Soroban RPC call to verify the ZK proof and emit the encrypted disclosure on-ledger.
-5.  Retrieval of the event payload from the ledger and decryption verification using the private View Key.
 
 ---
 

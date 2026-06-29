@@ -9,10 +9,60 @@ const RPC_URL = 'https://soroban-testnet.stellar.org';
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { txHash, privateKey } = body;
+    const { txHash, privateKey, payload, eventValue } = body;
 
-    if (!txHash || !privateKey) {
-      return NextResponse.json({ error: 'Missing transaction hash or view key' }, { status: 400 });
+    if (!privateKey) {
+      return NextResponse.json({ error: 'Missing private view key' }, { status: 400 });
+    }
+
+    if (eventValue) {
+      console.log(`[API Decrypt] Parsing provided eventValue base64...`);
+      try {
+        const scVal = xdr.ScVal.fromXDR(Buffer.from(eventValue, 'base64'));
+        const nativeValue: any = scValToNative(scVal);
+        const retrievedPayload = {
+          ephemeralPublicKeyHex: nativeValue[0].toString('hex'),
+          ivHex: nativeValue[1].toString('hex'),
+          tagHex: nativeValue[2].toString('hex'),
+          ciphertextHex: nativeValue[3].toString('hex'),
+        };
+        const decryptedAmount = decryptSettlement(retrievedPayload, privateKey);
+        console.log(`[API Decrypt] Successfully decrypted amount via eventValue: ${decryptedAmount}`);
+        return NextResponse.json({
+          success: true,
+          decryptedAmount,
+          payload: retrievedPayload
+        });
+      } catch (err: any) {
+        console.error(`[API Decrypt] Decryption via eventValue failed:`, err.message);
+        return NextResponse.json({ 
+          error: 'Decryption failed: invalid event value or View Key mismatch',
+          details: err.message 
+        }, { status: 400 });
+      }
+    }
+
+    if (payload) {
+      console.log(`[API Decrypt] Directly decrypting provided payload...`);
+      try {
+        const decryptedAmount = decryptSettlement(payload, privateKey);
+        console.log(`[API Decrypt] Successfully decrypted amount (direct): ${decryptedAmount}`);
+        return NextResponse.json({
+          success: true,
+          decryptedAmount,
+          payload
+        });
+      } catch (decryptError: any) {
+        console.error(`[API Decrypt] Decryption failed (direct):`, decryptError.message);
+        return NextResponse.json({ 
+          error: 'Decryption failed: View Key is invalid or authentication tag check failed',
+          details: decryptError.message 
+        }, { status: 401 });
+      }
+    }
+
+    if (!txHash) {
+      return NextResponse.json({ error: 'Missing transaction hash' }, { status: 400 });
     }
 
     console.log(`[API Decrypt] Processing decryption for Tx: ${txHash}`);

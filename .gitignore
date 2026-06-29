@@ -1,7 +1,20 @@
-﻿target/
+target/
 **/target/
 node_modules/
 .next/
 *.exe
 .env
 .env.local
+
+# Prover / Cryptography artifacts
+circuits/settle_*
+circuits/pot10_*
+circuits/*.ptau
+circuits/test_*.json
+circuits/check_libs.sh
+circuits/compute_poseidon.mjs
+circuits/poseidon_hash.js
+
+# Temp files
+brag.zip
+temp_git_brag/

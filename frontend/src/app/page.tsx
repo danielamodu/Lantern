@@ -43,6 +43,8 @@ export default function LandingPage() {
   const [openFaqIndex, setOpenFaqIndex] = useState<number | null>(null);
   const [isScrolled, setIsScrolled] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [footerEmail, setFooterEmail] = useState('');
+  const [footerEmailSent, setFooterEmailSent] = useState(false);
 
   useEffect(() => {
     const handleScroll = () => {
@@ -105,20 +107,17 @@ export default function LandingPage() {
             </span>
           </Link>
 
-          {/* Center Nav Links */}
           <nav className="hidden md:flex items-center gap-8 text-[11px] uppercase tracking-[0.15em] text-[#8A8A8A]">
-            <a href="#how-it-works" className="hover:text-[#F2F2F0] transition-colors">How it Works</a>
-            <a href="#zk-sandbox" className="hover:text-[#F2F2F0] transition-colors">ZK Sandbox</a>
-            <a href="#faq" className="hover:text-[#F2F2F0] transition-colors">FAQ</a>
+            <a href="/#how-it-works" className="hover:text-[#F2F2F0] transition-colors">How it Works</a>
+            <Link href="/playground" className="hover:text-[#F2F2F0] transition-colors">ZK Visualizer</Link>
+            <Link href="/docs" className="hover:text-[#F2F2F0] transition-colors">Documentation</Link>
+            <Link href="/terms" className="hover:text-[#F2F2F0] transition-colors">Terms of Service</Link>
           </nav>
 
           {/* Right Actions */}
           <div className="hidden md:flex items-center gap-6">
-            <Link href="/app" className="text-[11px] uppercase tracking-[0.15em] text-[#8A8A8A] hover:text-[#F2F2F0] transition-colors">
-              Log In
-            </Link>
             <Link
-              href="/app"
+              href="/login"
               className="bg-[#1A1A1A] hover:bg-[#3A3A3A] border border-[#3A3A3A] text-[#F2F2F0] text-[11px] px-5 py-2 transition-all uppercase tracking-[0.15em]"
             >
               Enter App
@@ -141,36 +140,36 @@ export default function LandingPage() {
       {/* Mobile Drawer Menu */}
       {isMobileMenuOpen && (
         <div className="fixed inset-x-0 top-16 bottom-0 z-40 bg-[#0A0A0A] pt-8 px-6 flex flex-col space-y-6 text-xs uppercase tracking-[0.15em] font-mono border-t border-[#3A3A3A] md:hidden">
-          <a 
-            href="#how-it-works" 
+          <Link 
+            href="/playground" 
             onClick={() => setIsMobileMenuOpen(false)}
             className="text-[#8A8A8A] hover:text-[#F2F2F0] py-3 border-b border-[#1A1A1A]"
           >
-            How it Works
-          </a>
-          <a 
-            href="#zk-sandbox" 
+            ZK Visualizer
+          </Link>
+          <Link 
+            href="/docs" 
             onClick={() => setIsMobileMenuOpen(false)}
             className="text-[#8A8A8A] hover:text-[#F2F2F0] py-3 border-b border-[#1A1A1A]"
           >
-            ZK Sandbox
-          </a>
+            Documentation
+          </Link>
+          <Link 
+            href="/terms" 
+            onClick={() => setIsMobileMenuOpen(false)}
+            className="text-[#8A8A8A] hover:text-[#F2F2F0] py-3 border-b border-[#1A1A1A]"
+          >
+            Terms of Service
+          </Link>
           <a 
-            href="#faq" 
+            href="/#faq" 
             onClick={() => setIsMobileMenuOpen(false)}
             className="text-[#8A8A8A] hover:text-[#F2F2F0] py-3 border-b border-[#1A1A1A]"
           >
             FAQ
           </a>
-          <Link 
-            href="/app" 
-            onClick={() => setIsMobileMenuOpen(false)}
-            className="text-[#8A8A8A] hover:text-[#F2F2F0] py-3 border-b border-[#1A1A1A]"
-          >
-            Log In
-          </Link>
           <Link
-            href="/app"
+            href="/login"
             onClick={() => setIsMobileMenuOpen(false)}
             className="w-full bg-[#1A1A1A] hover:bg-[#3A3A3A] border border-[#3A3A3A] text-[#F2F2F0] text-center py-3.5 mt-4"
           >
@@ -180,7 +179,7 @@ export default function LandingPage() {
       )}
 
       {/* Main Content Body */}
-      <main className="flex-1 w-full max-w-[1200px] mx-auto px-6 md:px-12 pt-32 pb-16 flex flex-col justify-between">
+      <main className="flex-1 w-full max-w-[1200px] mx-auto px-6 md:px-12 pt-32 pb-16 flex flex-col">
 
       {/* Hero Headline Block */}
       <header className="text-center max-w-4xl mx-auto mb-28">
@@ -194,15 +193,23 @@ export default function LandingPage() {
           Verify asset face-value compliance cryptographically on the public ledger without exposing private transaction amounts.
         </p>
 
-        <Link
-          href="/app"
-          className="group inline-flex items-center gap-3 bg-[#1A1A1A] hover:bg-[#3A3A3A] border border-[#3A3A3A] text-[#F2F2F0] text-xs px-8 py-3.5 transition-all"
-        >
-          Launch Settlement Dashboard
-          <div className="w-5 h-5 bg-[#3A3A3A] flex items-center justify-center transition-transform group-hover:translate-x-1 border border-[#3A3A3A]">
-            <ArrowRight className="w-3 h-3 text-[#F2F2F0]" />
-          </div>
-        </Link>
+        <div className="flex flex-col sm:flex-row justify-center gap-4">
+          <Link
+            href="/app"
+            className="group inline-flex items-center justify-center gap-3 bg-[#1A1A1A] hover:bg-[#3A3A3A] border border-[#3A3A3A] text-[#F2F2F0] text-xs px-8 py-3.5 transition-all"
+          >
+            Launch Settlement Dashboard
+            <div className="w-5 h-5 bg-[#3A3A3A] flex items-center justify-center transition-transform group-hover:translate-x-1 border border-[#3A3A3A]">
+              <ArrowRight className="w-3 h-3 text-[#F2F2F0]" />
+            </div>
+          </Link>
+          <Link
+            href="/playground"
+            className="inline-flex items-center justify-center gap-2 border border-transparent hover:border-[#3A3A3A] text-[#8A8A8A] hover:text-[#F2F2F0] text-xs px-8 py-3.5 transition-all"
+          >
+            Curious how the ZK math works? Try the visualizer
+          </Link>
+        </div>
       </header>
 
       {/* 3-Step Visual Sequence */}
@@ -276,10 +283,10 @@ export default function LandingPage() {
         <div className="grid grid-cols-1 md:grid-cols-12 gap-8 items-stretch">
           <div className="md:col-span-5 flex flex-col justify-between space-y-6">
             <div>
-              <span className="text-[9px] font-bold text-[#8A8A8A] tracking-wider uppercase bg-[#0A0A0A] border border-[#3A3A3A] px-2.5 py-1">Interactive Engine</span>
-              <h2 className="text-lg font-bold text-[#F2F2F0] mt-4 uppercase">Try the ZK Verifier</h2>
+              <span className="text-[9px] font-bold text-[#8A8A8A] tracking-wider uppercase bg-[#0A0A0A] border border-[#3A3A3A] px-2.5 py-1">Conceptual Demo</span>
+              <h2 className="text-lg font-bold text-[#F2F2F0] mt-4 uppercase">Try the ZK Visualizer</h2>
               <p className="text-xs text-[#8A8A8A] mt-2 leading-relaxed">
-                Adjust the private amount and the asset's face value. Test how the ZK Prover confirms compliance without revealing the inputs.
+                Adjust simulated parameters below. Test how compliance verification mathematically operates to match rule statements, flagging discrepancies.
               </p>
             </div>
 
@@ -321,7 +328,7 @@ export default function LandingPage() {
                 disabled={isPlaying}
                 className="w-full bg-[#F2F2F0] hover:bg-[#8A8A8A] text-[#0A0A0A] text-xs font-bold py-3 transition-all disabled:opacity-50"
               >
-                {isPlaying ? 'Computing Proving Circuit...' : 'Compute & Verify ZK Proof'}
+                {isPlaying ? 'Simulating Prover Calculations...' : 'Run Simulated Proof'}
               </button>
             </div>
           </div>
@@ -342,9 +349,8 @@ export default function LandingPage() {
                     : 'bg-[#1A1A1A] border-[#C41E1E] text-[#C41E1E]'
                 }`}>
                   {playSuccess 
-                    ? '✅ COMPLIANT: ZK Verification returns TRUE.' 
-                    : '❌ COMPLIANCE BREACH: ZK Verification returns FALSE.'
-                  }
+                    ? '✅ SIMULATION COMPLIANT: Equations validated successfully.' 
+                    : '❌ SIMULATION REJECTED: Constraint check equations returned mismatch.'}
                 </div>
               )}
             </div>
@@ -435,10 +441,194 @@ export default function LandingPage() {
 
       </main>
 
-      {/* Footer */}
-      <footer className="border-t border-[#3A3A3A] pt-8 mt-12 flex flex-col md:flex-row justify-between items-center text-[10px] text-[#8A8A8A] gap-4 max-w-[1200px] mx-auto w-full px-6 md:px-12 mb-8">
-        <div>Lantern © 2026. Zero-Knowledge Compliance Engine.</div>
-        <div>Built for Stellar Protocol 27.</div>
+      {/* ── MEGA FOOTER ── */}
+      <footer className="relative overflow-hidden bg-[#0A0A0A] border-t border-[#1E1E1E] mt-0">
+
+        {/* Subtle grid lines background */}
+        <div className="absolute inset-0 pointer-events-none" style={{
+          backgroundImage: 'linear-gradient(rgba(255,255,255,0.015) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.015) 1px, transparent 1px)',
+          backgroundSize: '60px 60px'
+        }} />
+
+        {/* Top section — card + links + email */}
+        <div className="relative z-10 max-w-[1200px] mx-auto px-6 md:px-12 pt-16 pb-10">
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-10 items-start">
+
+            {/* LEFT — Branded Card */}
+            <div className="md:col-span-4">
+              <div
+                className="relative rounded-2xl overflow-hidden h-64 flex flex-col justify-between p-6"
+                style={{
+                  background: 'linear-gradient(135deg, #0d1b35 0%, #050d1f 40%, #000510 70%, #0a0a18 100%)'
+                }}
+              >
+                {/* Animated glow orb */}
+                <div
+                  className="absolute w-72 h-72 rounded-full opacity-30 pointer-events-none"
+                  style={{
+                    background: 'radial-gradient(circle, #2563eb 0%, #1d4ed8 30%, transparent 70%)',
+                    top: '-40px',
+                    right: '-40px',
+                    animation: 'orb-drift 8s ease-in-out infinite'
+                  }}
+                />
+                <div
+                  className="absolute w-40 h-40 rounded-full opacity-20 pointer-events-none"
+                  style={{
+                    background: 'radial-gradient(circle, #7c3aed 0%, transparent 70%)',
+                    bottom: '20px',
+                    left: '-20px',
+                    animation: 'orb-drift 12s ease-in-out infinite reverse'
+                  }}
+                />
+
+                {/* Light sweep */}
+                <div
+                  className="absolute inset-0 pointer-events-none"
+                  style={{
+                    background: 'linear-gradient(105deg, transparent 35%, rgba(255,255,255,0.04) 50%, transparent 65%)',
+                    animation: 'sweep 5s ease-in-out infinite'
+                  }}
+                />
+
+                {/* Card content top */}
+                <div className="relative z-10 flex items-center gap-2">
+                  <div className="w-6 h-6 rotate-45 border border-[#F2F2F0]/60 flex items-center justify-center">
+                    <div className="w-1.5 h-1.5 bg-[#F2F2F0]" />
+                  </div>
+                  <span className="text-[#F2F2F0] text-sm font-bold tracking-widest uppercase">Lantern</span>
+                </div>
+
+                {/* Card content bottom */}
+                <div className="relative z-10">
+                  <p className="text-white/90 text-sm font-medium leading-snug mb-4">
+                    Private settlements,<br />cryptographically guaranteed.
+                  </p>
+                  <div className="flex items-center gap-4">
+                    <span className="text-white/40 text-[10px] uppercase tracking-widest">Stay in touch</span>
+                    <div className="flex items-center gap-3">
+                      {/* X / Twitter */}
+                      <a href="https://x.com/fortyxbt" target="_blank" rel="noreferrer" className="text-white/40 hover:text-white/90 transition-colors duration-200">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.744l7.73-8.835L1.254 2.25H8.08l4.253 5.622zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+                      </a>
+                      {/* GitHub */}
+                      <a href="https://github.com/danielamodu" target="_blank" rel="noreferrer" className="text-white/40 hover:text-white/90 transition-colors duration-200">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/></svg>
+                      </a>
+                      {/* Discord */}
+                      <a href="https://discord.com/users/fortyxbt" target="_blank" rel="noreferrer" className="text-white/40 hover:text-white/90 transition-colors duration-200">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057c.002.022.015.043.033.056a19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028 14.09 14.09 0 0 0 1.226-1.994.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/></svg>
+                      </a>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* CENTRE — Links columns */}
+            <div className="md:col-span-5 grid grid-cols-2 gap-8 pt-2">
+              <div>
+                <p className="text-[9px] text-[#5A5A5A] uppercase tracking-[0.2em] mb-4 font-semibold">Product</p>
+                <ul className="space-y-2.5">
+                  {[
+                    { label: 'Dashboard', href: '/app' },
+                    { label: 'ZK Visualizer', href: '/playground' },
+                    { label: 'Ledger Inspector', href: '/inspector' },
+                    { label: 'How It Works', href: '/#how-it-works' },
+                  ].map(({ label, href }) => (
+                    <li key={label}>
+                      <Link href={href} className="text-[#8A8A8A] hover:text-[#F2F2F0] text-xs transition-colors duration-200">
+                        {label}
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <div>
+                <p className="text-[9px] text-[#5A5A5A] uppercase tracking-[0.2em] mb-4 font-semibold">Protocol</p>
+                <ul className="space-y-2.5">
+                  {[
+                    { label: 'Stellar Protocol 27', href: 'https://stellar.org', external: true },
+                    { label: 'Soroban Smart Contracts', href: 'https://soroban.stellar.org', external: true },
+                    { label: 'Docs', href: '/docs' },
+                    { label: 'Terms of Service', href: '/terms' },
+                  ].map(({ label, href, external }) => (
+                    <li key={label}>
+                      <a
+                        href={href}
+                        target={external ? '_blank' : undefined}
+                        rel={external ? 'noreferrer' : undefined}
+                        className="text-[#8A8A8A] hover:text-[#F2F2F0] text-xs transition-colors duration-200"
+                      >
+                        {label}
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+
+            {/* RIGHT — Email CTA */}
+            <div className="md:col-span-3 pt-2">
+              <p className="text-[9px] text-[#5A5A5A] uppercase tracking-[0.2em] mb-4 font-semibold">Stay Updated</p>
+              <p className="text-[#8A8A8A] text-xs leading-relaxed mb-5">
+                ZK moves fast.{' '}
+                <span className="text-[#F2F2F0] font-medium">Get early access & protocol updates.</span>
+              </p>
+              {footerEmailSent ? (
+                <div className="flex items-center gap-2 text-emerald-400 text-xs">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="20 6 9 17 4 12"/></svg>
+                  <span>You&apos;re on the list.</span>
+                </div>
+              ) : (
+                <div className="flex border border-[#2A2A2A] overflow-hidden focus-within:border-[#4A4A4A] transition-colors duration-200">
+                  <input
+                    type="email"
+                    placeholder="Enter email address"
+                    value={footerEmail}
+                    onChange={(e) => setFooterEmail(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter' && footerEmail.includes('@')) setFooterEmailSent(true); }}
+                    className="flex-1 bg-[#111111] text-[#F2F2F0] text-[10px] px-3 py-2.5 outline-none placeholder-[#3A3A3A] font-mono tracking-wide"
+                  />
+                  <button
+                    onClick={() => { if (footerEmail.includes('@')) setFooterEmailSent(true); }}
+                    className="bg-[#F2F2F0] hover:bg-white text-[#0A0A0A] text-[9px] font-bold uppercase tracking-wider px-3 transition-colors duration-200 shrink-0"
+                  >
+                    Notify
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Divider */}
+        <div className="relative z-10 max-w-[1200px] mx-auto px-6 md:px-12">
+          <div className="h-px bg-gradient-to-r from-transparent via-[#2A2A2A] to-transparent" />
+        </div>
+
+        {/* Bottom bar */}
+        <div className="relative z-10 max-w-[1200px] mx-auto px-6 md:px-12 py-5 flex flex-col md:flex-row items-center justify-between gap-3">
+          <span className="text-[9px] text-[#4A4A4A] uppercase tracking-[0.2em]">
+            © 2026 Lantern Protocol. All rights reserved.
+          </span>
+          <span className="text-[9px] text-[#4A4A4A] uppercase tracking-[0.2em]">
+            Built for Stellar Protocol 27 · Testnet
+          </span>
+        </div>
+
+        {/* Keyframe animations injected inline */}
+        <style>{`
+          @keyframes orb-drift {
+            0%, 100% { transform: translate(0, 0) scale(1); }
+            33% { transform: translate(-12px, 16px) scale(1.05); }
+            66% { transform: translate(10px, -10px) scale(0.97); }
+          }
+          @keyframes sweep {
+            0% { transform: translateX(-100%); }
+            60%, 100% { transform: translateX(100%); }
+          }
+        `}</style>
       </footer>
     </div>
   );
