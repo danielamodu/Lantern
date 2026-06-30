@@ -406,7 +406,7 @@ export async function POST(request: Request) {
       // assembleTransaction fills in the resource footprint, auth entries, and fee bump — 
       // producing the same unsigned XDR that `--build-only` returns.
       const assembled = StellarRpc.assembleTransaction(buildTx, simResult5).build();
-      unsignedXdr = assembled.toXDR().toString('base64');
+      unsignedXdr = Buffer.from(assembled.toXDR()).toString('base64');
       console.log('[Settle][Step5] SDK assemble success — unsignedXdr length:', unsignedXdr.length);
     } catch (buildErr: any) {
       console.error('[Settle][Step5] SDK build/simulate failed:', buildErr?.message ?? buildErr);

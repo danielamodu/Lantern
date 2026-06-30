@@ -125,13 +125,13 @@ export default function LoginPage() {
             {isFreighterInstalled === false ? (
               <div className="space-y-4">
                 <Button 
-                  asChild
+                  onClick={() => window.open('https://www.freighter.app/', '_blank', 'noopener,noreferrer')}
                   className="w-full bg-[#C41E1E] hover:bg-[#A31818] text-[#F2F2F0] text-xs font-bold py-6 rounded-none cursor-pointer"
                 >
-                  <a href="https://www.freighter.app/" target="_blank" rel="noreferrer" className="flex items-center justify-center gap-2">
+                  <span className="flex items-center justify-center gap-2">
                     <Wallet className="w-4 h-4" />
                     INSTALL FREIGHTER WALLET
-                  </a>
+                  </span>
                 </Button>
                 <p className="text-[9px] text-[#8A8A8A] text-center uppercase tracking-wider">
                   Freighter extension was not detected in this browser.

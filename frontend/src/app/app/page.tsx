@@ -154,7 +154,7 @@ export default function AppDashboard() {
               if (syncInfo && syncInfo.exists) {
                 return {
                   ...asset,
-                  status: syncInfo.settled ? 'Settled' : 'Pending',
+                  status: (syncInfo.settled ? 'Settled' : 'Pending') as 'Settled' | 'Pending',
                   faceValue: syncInfo.faceValue
                 };
               }
@@ -169,7 +169,7 @@ export default function AppDashboard() {
             if (syncInfo && syncInfo.exists) {
               return {
                 ...prev,
-                status: syncInfo.settled ? 'Settled' : 'Pending',
+                status: (syncInfo.settled ? 'Settled' : 'Pending') as 'Settled' | 'Pending',
                 faceValue: syncInfo.faceValue
               };
             }
@@ -475,9 +475,17 @@ export default function AppDashboard() {
       addTelemetryLog('[WALLET] Transaction built successfully. Requesting Freighter signature...');
 
       // 2. Sign transaction via Freighter
-      const signedTx = await signTransaction(prepData.xdr, {
-        network: 'TESTNET',
+      const signedTxResult = await signTransaction(prepData.xdr, {
+        networkPassphrase: 'Test SDF Network ; September 2015',
       });
+
+      const signedXdr = typeof signedTxResult === 'string' 
+        ? signedTxResult 
+        : (signedTxResult as any)?.signedTxXdr;
+
+      if (!signedXdr) {
+        throw new Error('Failed to sign transaction or signature was rejected.');
+      }
 
       addTelemetryLog('[HORIZON] Submitting payment instruction to Horizon testnet...');
 
@@ -485,7 +493,7 @@ export default function AppDashboard() {
       const submitRes = await fetch('https://horizon-testnet.stellar.org/transactions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ tx: signedTx }),
+        body: new URLSearchParams({ tx: signedXdr }),
       });
 
       const submitData = await submitRes.json();

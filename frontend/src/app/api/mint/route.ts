@@ -44,21 +44,22 @@ export async function POST(request: Request) {
         tx.sign(keypair);
 
         const sendResult = await rpcServer.sendTransaction(tx);
-        if (sendResult.status !== 'PENDING' && sendResult.status !== 'SUCCESS') {
+        const sendStatus = sendResult.status as string;
+        if (sendStatus !== 'PENDING' && sendStatus !== 'SUCCESS') {
           throw new Error(`Soroban RPC submission failed with status: ${sendResult.status}`);
         }
 
         const txHash = sendResult.hash;
         console.log(`[API Mint] Native transaction submitted: ${txHash}. Polling status...`);
 
-        let txStatus = sendResult.status;
+        let txStatus: string = sendResult.status;
         let attempts = 0;
         while (txStatus === 'PENDING' && attempts < 15) {
           await new Promise(resolve => setTimeout(resolve, 1000));
           const statusResult = await rpcServer.getTransaction(txHash);
-          txStatus = statusResult.status;
+          txStatus = statusResult.status as string;
           attempts++;
-          if (statusResult.status === 'SUCCESS') {
+          if (txStatus === 'SUCCESS') {
             console.log(`[API Mint] Native transaction committed!`);
             return NextResponse.json({
               success: true,

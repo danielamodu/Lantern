@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { Horizon, TransactionBuilder, Asset, Operation } from '@stellar/stellar-sdk';
+import { Horizon, TransactionBuilder, Asset, Operation, Memo } from '@stellar/stellar-sdk';
 
 const ISSUER = 'GCTD7WUJYYE2FEGQ4IRHIASGL75MQFBZGTXRQGHJJVXBY73TRKHWK4J4';
 
@@ -29,7 +29,7 @@ export async function POST(request: Request) {
           amount: '1.0', // 1 XLM
         })
       )
-      .addMemo(TransactionBuilder.Memo.text(`RED-${assetId}`))
+      .addMemo(Memo.text(`RED-${assetId}`))
       .setTimeout(300)
       .build();
 
