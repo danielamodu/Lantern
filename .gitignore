@@ -14,6 +14,22 @@ circuits/test_*.json
 circuits/check_libs.sh
 circuits/compute_poseidon.mjs
 circuits/poseidon_hash.js
+circuits/*.zkey
+circuits/*.r1cs
+circuits/*.sym
+circuits/*.wtns
+circuits/verification_key.json
+circuits/proof.json
+circuits/public.json
+circuits/input.json
+circuits/witness.*
+circuits/custom_*
+circuits/discount_*
+circuits/settlement_js/
+circuits/discount_settlement_js/
+circuits/settle_*
+circuits/node_modules/
+circuits/package-lock.json
 
 # Temp files
 brag.zip

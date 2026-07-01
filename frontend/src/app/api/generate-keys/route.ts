@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
-import { generateAuditorKeyPair } from '../../../utils/cryptoDisclosure';
+import { generateAuditorKeyPair } from '@/utils/cryptoDisclosure';
+import { withAuth, AuthenticatedRequest } from '@/lib/auth';
 
-export async function GET() {
+async function GETHandler(req: AuthenticatedRequest) {
   try {
     const keys = generateAuditorKeyPair();
     return NextResponse.json(keys);
@@ -9,3 +10,5 @@ export async function GET() {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
+
+export const GET = withAuth(GETHandler);

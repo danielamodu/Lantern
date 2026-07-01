@@ -96,7 +96,7 @@ sequenceDiagram
 ## 🌐 On-Chain Deployment Details (Stellar Testnet)
 
 *   **Groth16 Verifier Contract ID:** `CCRUK3TL4BQMSOI5KHC4DO2VIJ7P7TTWFVXYRKPCVGMCLW2YIAO5JI6B`
-*   **RWA Settlement Controller Contract ID:** `CACFHOCMFKHVUR4UKS5W5XG4QCQBDCDDDT54SOOMHYBHKZIQA43MREUT`
+*   **RWA Settlement Controller Contract ID:** `CDGFOX2B3FS2SF2WQ76JPXFJI5RM5EFZ26DTGW3BTC2FWW2BTSVJJZ3A`
 *   **Stellar Network:** Testnet (Protocol 27 active)
 
 ---

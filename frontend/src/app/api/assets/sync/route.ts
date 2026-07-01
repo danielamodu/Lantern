@@ -1,8 +1,7 @@
 import { NextResponse } from 'next/server';
 import { rpc as StellarRpc, Contract, xdr, TransactionBuilder, Address } from '@stellar/stellar-sdk';
-
-const CONTRACT_ID = 'CACFHOCMFKHVUR4UKS5W5XG4QCQBDCDDDT54SOOMHYBHKZIQA43MREUT';
-const ISSUER = 'GCTD7WUJYYE2FEGQ4IRHIASGL75MQFBZGTXRQGHJJVXBY73TRKHWK4J4';
+import { CONTRACT_ID, ISSUER, SOROBAN_RPC_URL, NETWORK_PASSPHRASE } from '@/lib/config';
+import { cacheInvalidate } from '@/lib/cache';
 
 export async function POST(request: Request) {
   try {
@@ -11,19 +10,24 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Invalid or missing asset IDs list' }, { status: 400 });
     }
 
-    const rpcServer = new StellarRpc.Server('https://soroban-testnet.stellar.org');
+    const rpcServer = new StellarRpc.Server(SOROBAN_RPC_URL);
     const contract = new Contract(CONTRACT_ID);
-    const results: Record<number, { faceValue: number, settled: boolean, exists: boolean }> = {};
+    const results: Record<number, { faceValue: number, status: string, assetClass: string, maturityTimestamp: number, couponBps: number, exists: boolean }> = {};
 
-    // Optimize: Fetch account once outside the loop to run all simulations fast
-    const sourceAccount = await rpcServer.getAccount(ISSUER);
+    let sourceAccount: any;
+    try {
+      sourceAccount = await rpcServer.getAccount(ISSUER);
+    } catch {
+      await fetch(`https://friendbot.stellar.org/?addr=${ISSUER}`);
+      sourceAccount = await rpcServer.getAccount(ISSUER);
+    }
 
     for (const id of ids) {
       try {
         const op = contract.call('get_asset', xdr.ScVal.scvU32(Number(id)));
         const tx = new TransactionBuilder(sourceAccount, {
           fee: '100',
-          networkPassphrase: 'Test SDF Network ; September 2015',
+          networkPassphrase: NETWORK_PASSPHRASE,
         })
           .addOperation(op)
           .setTimeout(30)
@@ -48,22 +52,46 @@ export async function POST(request: Request) {
                     }
                   }
                 }
-                if (key === 'settled') { try { assetInfo.settled = val.b(); } catch(_) {} }
+                if (key === 'status') {
+                  try { assetInfo.status = val.vec()?.[0]?.sym()?.toString() || val.toXDR('hex'); } catch(_) {
+                    try { assetInfo.status = val.sym().toString(); } catch(__) {}
+                  }
+                }
+                if (key === 'asset_class') {
+                  try { assetInfo.asset_class = val.vec()?.[0]?.sym()?.toString() || val.sym().toString() || val.toXDR('hex'); } catch(_) {
+                    try { assetInfo.asset_class = val.sym().toString(); } catch(__) {}
+                  }
+                }
+                if (key === 'maturity_timestamp') {
+                  try { assetInfo.maturity_timestamp = val.u64().toString(); } catch(_) {
+                    try { assetInfo.maturity_timestamp = String(val.i128().lo()); } catch(__) {}
+                  }
+                }
+                if (key === 'coupon_bps') {
+                  try { assetInfo.coupon_bps = val.u64().toString(); } catch(_) {
+                    try { assetInfo.coupon_bps = String(val.i128().lo()); } catch(__) {}
+                  }
+                }
               }
               results[id] = {
                 exists: true,
-                faceValue: Number(assetInfo.face_value),
-                settled: !!assetInfo.settled
+                faceValue: Number(assetInfo.face_value || 0),
+                status: assetInfo.status || 'Active',
+                assetClass: assetInfo.asset_class || 'TreasuryBill',
+                maturityTimestamp: Number(assetInfo.maturity_timestamp || 0),
+                couponBps: Number(assetInfo.coupon_bps || 0),
               };
               continue;
             }
           }
         }
-        results[id] = { exists: false, faceValue: 0, settled: false };
+        results[id] = { exists: false, faceValue: 0, status: 'Active', assetClass: 'TreasuryBill', maturityTimestamp: 0, couponBps: 0 };
       } catch (err) {
-        results[id] = { exists: false, faceValue: 0, settled: false };
+        results[id] = { exists: false, faceValue: 0, status: 'Active', assetClass: 'TreasuryBill', maturityTimestamp: 0, couponBps: 0 };
       }
     }
+
+    cacheInvalidate('assets');
 
     return NextResponse.json({ success: true, results });
   } catch (err: any) {

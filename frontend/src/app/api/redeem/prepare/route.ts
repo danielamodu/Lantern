@@ -1,49 +1,93 @@
 import { NextResponse } from 'next/server';
-import { Horizon, TransactionBuilder, Asset, Operation, Memo } from '@stellar/stellar-sdk';
+import { rpc as StellarRpc, Contract, xdr, TransactionBuilder, Keypair } from '@stellar/stellar-sdk';
+import { withAuth, AuthenticatedRequest } from '@/lib/auth';
+import { CONTRACT_ID, DEPLOYER_SECRET, SOROBAN_RPC_URL, NETWORK_PASSPHRASE } from '@/lib/config';
 
-const ISSUER = 'GCTD7WUJYYE2FEGQ4IRHIASGL75MQFBZGTXRQGHJJVXBY73TRKHWK4J4';
-
-export async function POST(request: Request) {
+async function POSTHandler(req: AuthenticatedRequest) {
   try {
-    const { userAddress, assetId } = await request.json();
+    const body = await req.json();
 
-    if (!userAddress || !assetId) {
-      return NextResponse.json({ error: 'Missing userAddress or assetId' }, { status: 400 });
+    if (!body.assetId) {
+      return NextResponse.json({ error: 'Missing assetId' }, { status: 400 });
     }
 
-    console.log(`[API Redeem] Preparing payment tx from ${userAddress} to Issuer ${ISSUER} representing RWA #${assetId} redemption...`);
+    const assetIdNum = Number(body.assetId);
+    if (isNaN(assetIdNum) || assetIdNum <= 0 || assetIdNum > 99999999) {
+      return NextResponse.json({ error: 'Invalid assetId' }, { status: 400 });
+    }
 
-    // Load account sequence from Horizon
-    const horizon = new Horizon.Server('https://horizon-testnet.stellar.org');
-    const sourceAccount = await horizon.loadAccount(userAddress);
+    console.log(`[API Redeem] Calling redeem_asset for RWA #${body.assetId} on contract ${CONTRACT_ID}...`);
 
-    // Build payment transaction of 1 XLM to represent the on-chain redemption signal
+    const secret = DEPLOYER_SECRET;
+    if (!secret) {
+      return NextResponse.json({ error: 'Server misconfiguration: DEPLOYER_SECRET not set' }, { status: 500 });
+    }
+
+    const keypair = Keypair.fromSecret(secret);
+    const deployerAddress = keypair.publicKey();
+
+    const rpcServer = new StellarRpc.Server(SOROBAN_RPC_URL);
+    const contract = new Contract(CONTRACT_ID);
+
+    const op = contract.call(
+      'redeem_asset',
+      xdr.ScVal.scvU32(assetIdNum)
+    );
+
+    const sourceAccount = await rpcServer.getAccount(deployerAddress);
+
     const tx = new TransactionBuilder(sourceAccount, {
-      fee: '10000', // 0.001 XLM
-      networkPassphrase: 'Test SDF Network ; September 2015',
+      fee: '100000',
+      networkPassphrase: NETWORK_PASSPHRASE,
     })
-      .addOperation(
-        Operation.payment({
-          destination: ISSUER,
-          asset: Asset.native(),
-          amount: '1.0', // 1 XLM
-        })
-      )
-      .addMemo(Memo.text(`RED-${assetId}`))
-      .setTimeout(300)
+      .addOperation(op)
+      .setTimeout(30)
       .build();
 
-    const unsignedXdr = tx.toXDR();
+    tx.sign(keypair);
 
-    return NextResponse.json({
-      success: true,
-      xdr: unsignedXdr,
-    });
+    const sendResult = await rpcServer.sendTransaction(tx);
+    const sendStatus = sendResult.status as string;
+    if (sendStatus !== 'PENDING' && sendStatus !== 'SUCCESS') {
+      throw new Error(`Soroban RPC submission failed with status: ${sendResult.status}`);
+    }
+
+    const txHash = sendResult.hash;
+    console.log(`[API Redeem] Native transaction submitted: ${txHash}. Polling status...`);
+
+    let txStatus: string = sendResult.status;
+    let attempts = 0;
+    while (txStatus === 'PENDING' && attempts < 15) {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      const statusResult = await rpcServer.getTransaction(txHash);
+      txStatus = statusResult.status as string;
+      attempts++;
+      if (txStatus === 'SUCCESS') {
+        console.log(`[API Redeem] Native transaction committed!`);
+        return NextResponse.json({
+          success: true,
+          txHash,
+          method: 'native',
+          signerAddress: req.auth?.signerAddress
+        });
+      }
+    }
+    return NextResponse.json({ error: `Transaction timeout or failure on-chain: ${txStatus}` }, { status: 500 });
   } catch (err: any) {
-    console.error("[API Redeem] Error preparing redemption:", err);
-    return NextResponse.json({ 
-      error: 'Failed to prepare transaction', 
-      details: err.message || err 
-    }, { status: 500 });
+    console.error("[API Redeem] Error:", err);
+
+    if (err.message && err.message.includes('#107')) {
+      return NextResponse.json({ error: 'Asset already redeemed', code: 107 }, { status: 400 });
+    }
+    if (err.message && err.message.includes('#106')) {
+      return NextResponse.json({ error: 'Asset not settled — must settle before redeeming', code: 106 }, { status: 400 });
+    }
+    if (err.message && err.message.includes('#108')) {
+      return NextResponse.json({ error: 'Maturity not yet reached — cannot redeem', code: 108 }, { status: 400 });
+    }
+
+    return NextResponse.json({ error: err.message || 'Internal server error' }, { status: 500 });
   }
 }
+
+export const POST = withAuth(POSTHandler);

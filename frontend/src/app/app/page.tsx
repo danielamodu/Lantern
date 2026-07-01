@@ -22,7 +22,7 @@ import {
   Cpu,
   Layers
 } from 'lucide-react';
-import { requestAccess, signTransaction, isConnected } from '@stellar/freighter-api';
+import { requestAccess, signTransaction, signMessage, isConnected } from '@stellar/freighter-api';
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -47,8 +47,34 @@ const SEEDED_ASSETS: RwaAsset[] = [
   { id: 815, name: "Stellar Carbon Credit #805", faceValue: 12000, status: 'Pending' },
 ];
 
-const VERIFIER_ID = 'CCRUK3TL4BQMSOI5KHC4DO2VIJ7P7TTWFVXYRKPCVGMCLW2YIAO5JI6B';
-const CONTRACT_ID = 'CACFHOCMFKHVUR4UKS5W5XG4QCQBDCDDDT54SOOMHYBHKZIQA43MREUT';
+const VERIFIER_ID = process.env.NEXT_PUBLIC_VERIFIER_ID || 'CCRUK3TL4BQMSOI5KHC4DO2VIJ7P7TTWFVXYRKPCVGMCLW2YIAO5JI6B';
+const CONTRACT_ID = process.env.NEXT_PUBLIC_CONTRACT_ID || 'CACFHOCMFKHVUR4UKS5W5XG4QCQBDCDDDT54SOOMHYBHKZIQA43MREUT';
+
+function base64UrlToHex(b64url: string): string {
+  const b64 = b64url.replace(/-/g, '+').replace(/_/g, '/');
+  const pad = b64.length % 4 ? '='.repeat(4 - (b64.length % 4)) : '';
+  const bin = atob(b64 + pad);
+  return Array.from(bin, c => c.charCodeAt(0).toString(16).padStart(2, '0')).join('');
+}
+
+async function getAuthHeaders(): Promise<Record<string, string>> {
+  const nonce = crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(16);
+  const msgResult = await signMessage(`LANtern-auth-${nonce}`, {
+    networkPassphrase: 'Test SDF Network ; September 2015'
+  });
+  if (msgResult.error || !msgResult.signedMessage) {
+    console.warn('[Auth] signMessage failed, sending without auth headers');
+    return { 'x-nonce': nonce };
+  }
+  const sig = typeof msgResult.signedMessage === 'string'
+    ? msgResult.signedMessage
+    : Buffer.from(msgResult.signedMessage).toString('hex');
+  return {
+    'x-signer-address': msgResult.signerAddress,
+    'x-signature': sig.padStart(128, '0').substring(0, 128),
+    'x-nonce': nonce
+  };
+}
 
 export default function AppDashboard() {
   const [assets, setAssets] = useState<RwaAsset[]>(SEEDED_ASSETS);
@@ -100,7 +126,7 @@ export default function AppDashboard() {
     const time = new Date().toLocaleTimeString();
     return [
       `[${time}] [SYSTEM] ZK Telemetry Engine initialized. Listening for compliance proofs...`,
-      `[${time}] [SYSTEM] Connected to Soroban Contract: CACFHOCMFKHVUR4UKS5W5XG4QCQBDCDDDT54SOOMHYBHKZIQA43MREUT`,
+      `[${time}] [SYSTEM] Connected to Soroban Contract: ${CONTRACT_ID}`,
       `[${time}] [SYSTEM] Verifier Identity key active: CCRUK3TL4BQMSOI5...`
     ];
   });
@@ -108,6 +134,27 @@ export default function AppDashboard() {
   const addTelemetryLog = (msg: string) => {
     const time = new Date().toLocaleTimeString();
     setTelemetryLogs(prev => [...prev.slice(-49), `[${time}] ${msg}`]);
+  };
+
+  // Auth state
+  const [isAuthReady, setIsAuthReady] = useState(false);
+  const [authReadyTimer, setAuthReadyTimer] = useState(0);
+  const [authHeaders, setAuthHeaders] = useState<Record<string, string>>({});
+  const [loginError, setLoginError] = useState('');
+  const [isVerifying, setIsVerifying] = useState(false);
+  const [authTimeout, setAuthTimeout] = useState(120);
+  const [authAttempts, setAuthAttempts] = useState(0);
+  const [authWarning, setAuthWarning] = useState<string | null>(null);
+  const [hasCreatedAuthOnce, setHasCreatedAuthOnce] = useState(false);
+  const [isAuthRefreshing, setIsAuthRefreshing] = useState(false);
+  const [fallbackAuthUsed, setFallbackAuthUsed] = useState(false);
+  const [authDebugInfo, setAuthDebugInfo] = useState<any>(null);
+
+  const DEFAULT_AUTH_TIMEOUT_SECONDS = 120;
+  const MAX_AUTH_ATTEMPTS = 3;
+
+  const logAuthEvent = (event: string, details?: any) => {
+    console.log(`[AUTH] ${event}:`, details);
   };
 
   // Share view key modal state
@@ -120,18 +167,70 @@ export default function AppDashboard() {
   const [isConnectingWallet, setIsConnectingWallet] = useState(false);
   const [showOnboardModal, setShowOnboardModal] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
+  const [showLogin, setShowLogin] = useState(true);
+
+  useEffect(() => {
+    let authInterval: NodeJS.Timeout;
+
+    const initializeAuth = async () => {
+      try {
+        const currentAuthHeaders = await getAuthHeaders();
+        logAuthEvent('[INIT] Created auth headers', { 
+          hasAuth: !!currentAuthHeaders['x-signer-address']
+        });
+        setAuthHeaders(currentAuthHeaders);
+        setIsAuthReady(true);
+        setHasCreatedAuthOnce(true);
+        setAuthAttempts(0);
+        setAuthWarning(null);
+      } catch (err) {
+        logAuthEvent('[INIT] Auth initialization failed', err);
+      }
+    };
+
+    initializeAuth();
+
+    authInterval = setInterval(() => {
+      if (!isAuthRefreshing && isAuthReady) {
+        setIsAuthRefreshing(true);
+        logAuthEvent('[REFRESH] Regenerating auth headers...');
+        
+        const refreshTimer = setTimeout(async () => {
+          try {
+            const currentAuthHeaders = await getAuthHeaders();
+            setAuthHeaders(currentAuthHeaders);
+            setIsAuthReady(true);
+            setAuthReadyTimer(DEFAULT_AUTH_TIMEOUT_SECONDS);
+            logAuthEvent('[REFRESH] Auth headers refreshed successfully');
+          } catch (err) {
+            logAuthEvent('[REFRESH] Failed to refresh auth headers', err);
+            setAuthAttempts(prev => prev + 1);
+            if (authAttempts >= MAX_AUTH_ATTEMPTS) {
+              setAuthWarning('Authentication service unavailable. Using limited functionality.');
+              setFallbackAuthUsed(true);
+            }
+          } finally {
+            setIsAuthRefreshing(false);
+          }
+        }, 1000);
+        
+        return () => clearTimeout(refreshTimer);
+      }
+    }, 110 * 1000);
+
+    return () => clearInterval(authInterval);
+  }, [isAuthRefreshing]);
 
   // Generate dynamic keypair on mount
   useEffect(() => {
     generateNewKeys();
     
-    // Check wallet connection from sessionStorage
     const savedAddress = sessionStorage.getItem('lantern_wallet_address');
     if (savedAddress) {
       setWalletAddress(savedAddress);
       setIsAuthenticated(true);
+      setShowLogin(false);
     } else {
-      // Not logged in/connected, redirect to login page
       window.location.href = '/login';
       return;
     }
@@ -256,13 +355,22 @@ export default function AppDashboard() {
   const generateNewKeys = async () => {
     setIsGeneratingKeys(true);
     try {
-      const res = await fetch('/api/generate-keys');
-      const data = await res.json();
-      setPubViewKey(data.publicKeyHex);
-      setPrivViewKey(data.privateKeyHex);
-      setDecPrivKey(data.privateKeyHex);
-      sessionStorage.setItem('lantern_pub_view_key', data.publicKeyHex);
-      sessionStorage.setItem('lantern_priv_view_key', data.privateKeyHex);
+      const keyPair = await crypto.subtle.generateKey(
+        { name: 'ECDH', namedCurve: 'P-256' },
+        true,
+        ['deriveBits']
+      );
+      const jwkPriv = await crypto.subtle.exportKey('jwk', keyPair.privateKey);
+      const jwkPub = await crypto.subtle.exportKey('jwk', keyPair.publicKey);
+
+      const privHex = base64UrlToHex(jwkPriv.d!);
+      const pubHex = '04' + base64UrlToHex(jwkPub.x!) + base64UrlToHex(jwkPub.y!);
+
+      setPubViewKey(pubHex);
+      setPrivViewKey(privHex);
+      setDecPrivKey(privHex);
+      sessionStorage.setItem('lantern_pub_view_key', pubHex);
+      sessionStorage.setItem('lantern_priv_view_key', privHex);
     } catch (err) {
       console.error("Failed to generate keys:", err);
     } finally {
@@ -311,7 +419,10 @@ export default function AppDashboard() {
       // 1. Generate client-side encryption envelope
       const encryptRes = await fetch('/api/encrypt', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          ...authHeaders
+        },
         body: JSON.stringify({
           amount: currentAmount,
           auditorPublicKey: currentPublicKey
@@ -330,7 +441,10 @@ export default function AppDashboard() {
 
       const prepareRes = await fetch('/api/settle', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          ...authHeaders
+        },
         body: JSON.stringify({
           assetId: selectedAsset.id,
           amount: currentAmount,
@@ -405,7 +519,10 @@ export default function AppDashboard() {
         addTelemetryLog(`[SOROBAN] Browser submission bypassed/failed. Retrying via backend node router: ${clientErr.message}`);
         const submitRes = await fetch('/api/settle', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 
+            'Content-Type': 'application/json',
+            ...authHeaders
+          },
           body: JSON.stringify({ signedXdr })
         });
         const submitDataBack = await submitRes.json();
@@ -463,7 +580,10 @@ export default function AppDashboard() {
       // 1. Prepare payment transaction via backend API
       const prepRes = await fetch('/api/redeem/prepare', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          ...authHeaders
+        },
         body: JSON.stringify({ userAddress: walletAddress, assetId: selectedAsset.id }),
       });
 
@@ -538,7 +658,10 @@ export default function AppDashboard() {
     try {
       const response = await fetch('/api/mint', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          ...authHeaders
+        },
         body: JSON.stringify({ id: assetId, faceValue: Number(newFaceValue) }),
       });
 
@@ -639,7 +762,10 @@ export default function AppDashboard() {
 
       const res = await fetch('/api/decrypt', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          ...authHeaders
+        },
         body: JSON.stringify({
           txHash: decTxHash,
           privateKey: decPrivKey,

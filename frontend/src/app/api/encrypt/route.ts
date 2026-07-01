@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { encryptSettlement } from '../../../utils/cryptoDisclosure';
+import { encryptSettlement } from '@/utils/cryptoDisclosure';
 
 export async function POST(request: Request) {
   try {

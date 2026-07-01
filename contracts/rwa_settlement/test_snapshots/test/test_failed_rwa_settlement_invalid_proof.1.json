@@ -24,6 +24,19 @@
                 },
                 {
                   "u64": "2000"
+                },
+                {
+                  "vec": [
+                    {
+                      "symbol": "TreasuryBill"
+                    }
+                  ]
+                },
+                {
+                  "u64": "0"
+                },
+                {
+                  "u64": "0"
                 }
               ]
             }
@@ -79,6 +92,26 @@
                 "map": [
                   {
                     "key": {
+                      "symbol": "asset_class"
+                    },
+                    "val": {
+                      "vec": [
+                        {
+                          "symbol": "TreasuryBill"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "key": {
+                      "symbol": "coupon_bps"
+                    },
+                    "val": {
+                      "u64": "0"
+                    }
+                  },
+                  {
+                    "key": {
                       "symbol": "face_value"
                     },
                     "val": {
@@ -103,10 +136,22 @@
                   },
                   {
                     "key": {
-                      "symbol": "settled"
+                      "symbol": "maturity_timestamp"
                     },
                     "val": {
-                      "bool": false
+                      "u64": "0"
+                    }
+                  },
+                  {
+                    "key": {
+                      "symbol": "status"
+                    },
+                    "val": {
+                      "vec": [
+                        {
+                          "symbol": "Active"
+                        }
+                      ]
                     }
                   }
                 ]

@@ -17,7 +17,7 @@
               "function_name": "mint_asset",
               "args": [
                 {
-                  "u32": 101
+                  "u32": 301
                 },
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
@@ -47,6 +47,26 @@
     ],
     [],
     [],
+    [],
+    [
+      [
+        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
+        {
+          "function": {
+            "contract_fn": {
+              "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+              "function_name": "redeem_asset",
+              "args": [
+                {
+                  "u32": 301
+                }
+              ]
+            }
+          },
+          "sub_invocations": []
+        }
+      ]
+    ],
     []
   ],
   "ledger": {
@@ -87,7 +107,7 @@
               "ext": "v0",
               "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
               "key": {
-                "u32": 101
+                "u32": 301
               },
               "durability": "persistent",
               "val": {
@@ -125,7 +145,7 @@
                       "symbol": "id"
                     },
                     "val": {
-                      "u32": 101
+                      "u32": 301
                     }
                   },
                   {
@@ -151,7 +171,7 @@
                     "val": {
                       "vec": [
                         {
-                          "symbol": "Settled"
+                          "symbol": "Redeemed"
                         }
                       ]
                     }
@@ -195,6 +215,26 @@
           "ext": "v0"
         },
         "live_until": 4095
+      },
+      {
+        "entry": {
+          "last_modified_ledger_seq": 0,
+          "data": {
+            "contract_data": {
+              "ext": "v0",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
+              "key": {
+                "ledger_key_nonce": {
+                  "nonce": "1033654523790656264"
+                }
+              },
+              "durability": "temporary",
+              "val": "void"
+            }
+          },
+          "ext": "v0"
+        },
+        "live_until": 6311999
       },
       {
         "entry": {

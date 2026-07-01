@@ -18,7 +18,8 @@ import {
   Home,
   LogOut,
   Cpu,
-  Wallet
+  Wallet,
+  RefreshCw
 } from 'lucide-react';
 import { Button } from "@/components/ui/button";
 import { CiphertextReveal } from '../app/CiphertextReveal';
@@ -35,56 +36,34 @@ interface InspectorTx {
   tag: string;
   ciphertext: string;
   ledger: number;
+  eventType?: string;
+  discountBps?: number;
 }
 
-const INITIAL_TXS: InspectorTx[] = [
+const FALLBACK_TXS: InspectorTx[] = [
   {
-    txHash: '0x1de199e847c23bd32832049d5621b0a5a22e42ca09709f6d5216e84db9f39afb5',
-    assetId: 801,
-    assetName: 'US Treasury Bill #801',
-    faceValue: 1000,
-    actualAmount: 1000,
-    commitment: '0x572516bc4e0bbaf9d5621b0a5a122e42ca09709f6d5216e84db9f39afb5fa532',
-    ephemeralKey: '04a9e99c15814523d4e8992ca2516fa8a89ef239bd0102b489d81d2f9d8a9f2bc8a9b2b29188eef2f2ea8283a219bc29adbc09033333333333333333333333',
-    iv: 'a8e99bc2d01a918a',
-    tag: 'c891efbc9e823a8e9fa2818a1a9eef28',
-    ciphertext: 'fa3a9188b2b9',
-    ledger: 489912
-  },
-  {
-    txHash: '0x5f2f98e847c92ad32e892c2ca8aef239bd0102b489d81d2f9d8a9f2bc8a9b2b2',
-    assetId: 802,
-    assetName: 'Real Estate Fund #802',
-    faceValue: 1000,
-    actualAmount: 1000,
-    commitment: '0x2ea8283a219bc29adbc09038a89ef239bd0102b489d81d2f9d8a9f2bc8a9b2b2',
-    ephemeralKey: '041a9ebc9e823a8e9fa2818a1a9eef28eef2f2ea8283a219bc29adbc090333333a8e99bc2d01a918aeef2f2ea8283a219bc29adbc09033333333333333333333',
-    iv: '9e823a8e9fa2',
-    tag: 'fa3a9188b2b9a8e99bc2d01a918aeef2',
-    ciphertext: 'c891efbc9e82',
-    ledger: 489914
-  },
-  {
-    txHash: '0x8a92f02ca89709f6d5216e84db9f39afb5fa53272516bc4e0bbaf9d5621b0a5a',
-    assetId: 803,
-    assetName: 'Corporate Bond #803',
-    faceValue: 1000,
-    actualAmount: 1000,
-    commitment: '0x8a9eef28eef2f2ea8283a219bc29adbc09038a89ef239bd0102b489d81d2f9d8',
-    ephemeralKey: '043333333333333333333333a8e99bc2d01a918aeef2f2ea8283a219bc29adbc090333333a8e99bc2d01a918aeef2f2ea8283a219bc29adbc09033333333333333',
-    iv: 'ea8283a219bc',
-    tag: '9e823a8e9fa2fa3a9188b2b9a8e99bc2',
-    ciphertext: '8a89ef239bd0',
-    ledger: 489917
+    txHash: '—',
+    assetId: 0,
+    assetName: 'Waiting for events...',
+    faceValue: 0,
+    actualAmount: 0,
+    commitment: '',
+    ephemeralKey: '',
+    iv: '',
+    tag: '',
+    ciphertext: '',
+    ledger: 0
   }
 ];
 
 export default function LedgerInspector() {
-  const [txs, setTxs] = useState<InspectorTx[]>(INITIAL_TXS);
+  const [txs, setTxs] = useState<InspectorTx[]>(FALLBACK_TXS);
   const [viewKey, setViewKey] = useState('');
-  const [isDecrypted, setIsDecrypted] = useState(false);
+  const [isDecrypting, setIsDecrypting] = useState(false);
   const [decryptionError, setDecryptionError] = useState('');
-  const [selectedTx, setSelectedTx] = useState<InspectorTx | null>(INITIAL_TXS[0]);
+  const [selectedTx, setSelectedTx] = useState<InspectorTx | null>(null);
+  const [isLoadingEvents, setIsLoadingEvents] = useState(true);
+  const [decryptedValues, setDecryptedValues] = useState<Record<string, string>>({});
 
   // Mobile menu header toggles
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -104,6 +83,28 @@ export default function LedgerInspector() {
     }
   }, []);
 
+  useEffect(() => {
+    const fetchEvents = async () => {
+      setIsLoadingEvents(true);
+      try {
+        const res = await fetch('/api/events');
+        const data = await res.json();
+        if (data.success && data.events && data.events.length > 0) {
+          setTxs(data.events.reverse());
+          setSelectedTx(data.events[data.events.length - 1]);
+        } else {
+          setTxs(FALLBACK_TXS);
+          setSelectedTx(null);
+        }
+      } catch (_) {
+        setTxs(FALLBACK_TXS);
+      } finally {
+        setIsLoadingEvents(false);
+      }
+    };
+    fetchEvents();
+  }, []);
+
   // Check URL query parameters for pre-filled view key (Deep Link sharing)
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -111,29 +112,54 @@ export default function LedgerInspector() {
       const keyParam = params.get('viewKey') || params.get('key');
       if (keyParam) {
         setViewKey(keyParam);
-        // Automatically activate decryption if a key is passed
-        setIsDecrypted(true);
       }
     }
   }, []);
 
-  const handleDecryptToggle = () => {
-    if (isDecrypted) {
-      setIsDecrypted(false);
+  const isDecrypted = viewKey.trim().length >= 10 && Object.keys(decryptedValues).length > 0;
+
+  const handleDecryptToggle = async () => {
+    if (Object.keys(decryptedValues).length > 0) {
+      setDecryptedValues({});
       setDecryptionError('');
-    } else {
-      if (!viewKey.trim()) {
-        setDecryptionError('Please enter an Auditor Private View Key to decrypt.');
-        return;
-      }
-      // Simple simulation verification: check if key format looks like a view key (hex)
-      if (viewKey.length < 10) {
-        setDecryptionError('Invalid Private View Key size. Must be a valid Private Key.');
-        return;
-      }
-      setIsDecrypted(true);
-      setDecryptionError('');
+      return;
     }
+    if (!viewKey.trim()) {
+      setDecryptionError('Please enter an Auditor Private View Key to decrypt.');
+      return;
+    }
+    if (viewKey.length < 10) {
+      setDecryptionError('Invalid Private View Key size. Must be a valid Private Key.');
+      return;
+    }
+
+    setIsDecrypting(true);
+    setDecryptionError('');
+
+    const results: Record<string, string> = {};
+    let anySuccess = false;
+
+    for (const tx of txs) {
+      if (!tx.txHash || tx.txHash === '—') continue;
+      try {
+        const res = await fetch('/api/decrypt', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ txHash: tx.txHash, privateKey: viewKey.trim() }),
+        });
+        const data = await res.json();
+        if (data.decryptedAmount) {
+          results[tx.txHash] = data.decryptedAmount;
+          anySuccess = true;
+        }
+      } catch {}
+    }
+
+    if (!anySuccess) {
+      setDecryptionError('Decryption failed. Ensure the view key matches the transactions\' encryption keys.');
+    }
+    setDecryptedValues(results);
+    setIsDecrypting(false);
   };
 
   if (isAuthenticated === null) {
@@ -312,6 +338,8 @@ export default function LedgerInspector() {
               >
                 {isDecrypted ? (
                   <span className="flex items-center gap-1.5 justify-center"><EyeOff className="w-4 h-4" /> Lock Data</span>
+                ) : isDecrypting ? (
+                  <span className="flex items-center gap-1.5 justify-center"><RefreshCw className="w-4 h-4 animate-spin" /> Decrypting...</span>
                 ) : (
                   <span className="flex items-center gap-1.5 justify-center"><Eye className="w-4 h-4" /> Decrypt Ledger</span>
                 )}
@@ -337,13 +365,17 @@ export default function LedgerInspector() {
               <thead>
                 <tr className="border-b border-[#3A3A3A] text-[9px] text-[#8A8A8A] uppercase font-bold">
                   <th className="py-2.5">Tx Hash</th>
+                  <th>Event</th>
                   <th>RWA Name</th>
                   <th>Ledger</th>
                   <th className="text-right">Settled Amount</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#3A3A3A]/40 text-xs">
-                {txs.map((tx) => {
+                {isLoadingEvents ? (
+                  <tr><td colSpan={5} className="py-8 text-center text-[#8A8A8A]">Loading on-chain events...</td></tr>
+                ) : (
+                txs.map((tx) => {
                   const isSelected = selectedTx?.txHash === tx.txHash;
                   return (
                     <tr 
@@ -354,19 +386,31 @@ export default function LedgerInspector() {
                       }`}
                     >
                       <td className="py-4 font-mono select-all text-[#8A8A8A]">
-                        {tx.txHash.substring(0, 10)}...{tx.txHash.substring(tx.txHash.length - 8)}
+                        {tx.txHash.substring(0, 10)}...{tx.txHash.substring(Math.max(0, tx.txHash.length - 8))}
+                      </td>
+                      <td>
+                        <span className={`text-[8px] font-bold uppercase px-1.5 py-0.5 border ${
+                          tx.eventType === 'settle' ? 'border-[#C8F87C] text-[#C8F87C]' :
+                          tx.eventType === 'stl_d' ? 'border-[#F0C040] text-[#F0C040]' :
+                          tx.eventType === 'redeem' ? 'border-[#60A0FF] text-[#60A0FF]' :
+                          tx.eventType === 'mint' ? 'border-[#8A8A8A] text-[#8A8A8A]' :
+                          'border-[#3A3A3A] text-[#8A8A8A]'
+                        }`}>
+                          {tx.eventType || '—'}
+                        </span>
                       </td>
                       <td className="font-bold text-[#F2F2F0]">{tx.assetName}</td>
-                      <td className="font-mono text-[#8A8A8A]">{tx.ledger}</td>
-                      <td className="text-right font-mono font-bold">
-                        <CiphertextReveal 
-                          value={`$${tx.actualAmount}`} 
-                          isDecrypted={isDecrypted} 
-                        />
-                      </td>
+                      <td className="font-mono text-[#8A8A8A]">{tx.ledger || '—'}</td>
+                       <td className="text-right font-mono font-bold">
+                         <CiphertextReveal 
+                           value={decryptedValues[tx.txHash] ? `$${decryptedValues[tx.txHash]}` : `$${tx.actualAmount}`} 
+                           isDecrypted={!!decryptedValues[tx.txHash]} 
+                         />
+                       </td>
                     </tr>
                   );
-                })}
+                })
+                )}
               </tbody>
             </table>
           </div>
@@ -382,10 +426,19 @@ export default function LedgerInspector() {
 
                 <div className="space-y-3 text-[10px]">
                   
+                  {/* Event Type */}
+                  <div>
+                    <label className="block text-[8px] text-[#8A8A8A] uppercase font-bold">Event Type</label>
+                    <span className="font-mono text-[#F2F2F0]">{selectedTx.eventType || '—'}</span>
+                    {selectedTx.discountBps && selectedTx.discountBps > 0 && (
+                      <span className="ml-2 text-[#F0C040]">({selectedTx.discountBps / 100}% discount)</span>
+                    )}
+                  </div>
+
                   {/* Ledger */}
                   <div>
                     <label className="block text-[8px] text-[#8A8A8A] uppercase font-bold">Ledger Height</label>
-                    <span className="font-mono text-[#F2F2F0]">{selectedTx.ledger}</span>
+                    <span className="font-mono text-[#F2F2F0]">{selectedTx.ledger || '—'}</span>
                   </div>
 
                   {/* Commitment */}

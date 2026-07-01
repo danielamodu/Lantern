@@ -17,7 +17,7 @@
               "function_name": "mint_asset",
               "args": [
                 {
-                  "u32": 101
+                  "u32": 201
                 },
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
@@ -87,7 +87,7 @@
               "ext": "v0",
               "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
               "key": {
-                "u32": 101
+                "u32": 201
               },
               "durability": "persistent",
               "val": {
@@ -125,7 +125,7 @@
                       "symbol": "id"
                     },
                     "val": {
-                      "u32": 101
+                      "u32": 201
                     }
                   },
                   {

@@ -4,6 +4,68 @@ import { Horizon, TransactionBuilder, rpc as StellarRpc, Contract, xdr } from '@
 import { writeFileSync, readFileSync } from 'fs';
 import crypto from 'crypto';
 import { bls12_381 } from '@noble/curves/bls12-381';
+import { withAuth, AuthenticatedRequest } from '@/lib/auth';
+import { SETTLEMENT_CONTRACT_ID, ISSUER, SOROBAN_RPC_URL, HORIZON_URL, NETWORK_PASSPHRASE } from '@/lib/config';
+
+// ── Input validation utilities ────────────────────────────────────────
+function validateAssetId(assetId: any): number {
+  const num = Number(assetId);
+  if (isNaN(num) || num <= 0 || num > 99999999) {
+    throw new Error(`Invalid assetId: must be a positive integer between 1 and 99999999, got ${assetId}`);
+  }
+  return num;
+}
+
+function validateAmount(amount: any): string {
+  const str = String(amount);
+  if (!/^\d+(\.\d+)?$/.test(str)) {
+    throw new Error(`Invalid amount: must be a numeric string, got ${amount}`);
+  }
+  const num = parseFloat(str);
+  if (num <= 0) {
+    throw new Error(`Invalid amount: must be positive, got ${amount}`);
+  }
+  return str;
+}
+
+function validateStellarAddress(address: any): string {
+  const str = String(address);
+  if (!/^G[A-Z0-9]{55}$/.test(str)) {
+    throw new Error(`Invalid Stellar address format: must be G followed by 55 alphanumeric chars, got ${str}`);
+  }
+  return str;
+}
+
+function validateEphemeralPublicKey(pubKey: any): string {
+  const str = String(pubKey).trim();
+  const expectedLen = 130; // 65 bytes * 2 hex chars
+  if (!str.startsWith('04') && !str.match(/^0[0-9a-f]{128}$/i)) {
+    throw new Error(`Invalid ephemeral public key: must start with 04 prefix followed by 64 hex chars (total 130 chars), got ${str}`);
+  }
+  if (str.length !== expectedLen) {
+    throw new Error(`Invalid ephemeral public key length: expected ${expectedLen} chars, got ${str.length}`);
+  }
+  return str;
+}
+
+function validateHex(str: any, expectedBytes: number): string {
+  const hex = String(str).trim();
+  const expectedLen = expectedBytes * 2;
+  if (!/^[0-9a-fA-F]+$/.test(hex)) {
+    throw new Error(`Invalid hex string: expected hex characters, got ${hex}`);
+  }
+  if (hex.length !== expectedLen) {
+    throw new Error(`Invalid hex length: expected ${expectedLen} chars (${expectedBytes} bytes), got ${hex.length}`);
+  }
+  return hex;
+}
+
+function sanitizeFilePrefix(prefix: string): string {
+  if (!/^[a-zA-Z0-9_]+$/.test(prefix)) {
+    throw new Error(`Invalid file prefix: contains illegal characters (only alphanumeric and underscore allowed)`);
+  }
+  return prefix;
+}
 
 // ── circom2soroban: TypeScript port of stellar-circom2soroban Rust CLI ──────
 // Replicates arkworks serialize_uncompressed for BLS12-381 G1 (96 bytes) and G2 (192 bytes).
@@ -98,33 +160,30 @@ function vkToHex(vkJson: VkJson): string {
 }
 // ─────────────────────────────────────────────────────────────────────────────
 
-const CONTRACT_ID = 'CACFHOCMFKHVUR4UKS5W5XG4QCQBDCDDDT54SOOMHYBHKZIQA43MREUT';
-const ISSUER = 'GCTD7WUJYYE2FEGQ4IRHIASGL75MQFBZGTXRQGHJJVXBY73TRKHWK4J4';
+const CIRCUITS_WSL = process.env.CIRCUITS_WSL || '/mnt/c/Users/USER/.gemini/antigravity-ide/scratch/Lantern/circuits';
+const CIRCUITS_WIN = process.env.CIRCUITS_WIN || 'C:\\Users\\USER\\.gemini\\antigravity-ide\\scratch\\Lantern\\circuits';
 
-const CIRCUITS_WSL = '/mnt/c/Users/USER/.gemini/antigravity-ide/scratch/Lantern/circuits';
-const CIRCUITS_WIN = 'C:\\Users\\USER\\.gemini\\antigravity-ide\\scratch\\Lantern\\circuits';
-
-export async function POST(request: Request) {
+async function POSTHandler(req: AuthenticatedRequest) {
   try {
-    const body = await request.json();
+    const body = await req.json();
 
     // ── PHASE 2: Submit Signed Transaction XDR ──────────────────────────────
     if (body.signedXdr) {
       console.log('[Settle] Submitting signed XDR via Horizon Server...');
-      
+
       // Verify signedXdr is a plain string
       console.log(`[Settle] Verifying signedXdr type: ${typeof body.signedXdr}`);
       if (typeof body.signedXdr !== 'string') {
         console.error('[Settle] Error: signedXdr is not a plain string! Received:', body.signedXdr);
-        return NextResponse.json({ 
-          error: 'Horizon transaction submission failed', 
-          details: `Expected signedXdr to be a string, got ${typeof body.signedXdr}` 
+        return NextResponse.json({
+          error: 'Horizon transaction submission failed',
+          details: `Expected signedXdr to be a string, got ${typeof body.signedXdr}`
         }, { status: 400 });
       }
 
       try {
-        const server = new Horizon.Server('https://horizon-testnet.stellar.org');
-        const tx = TransactionBuilder.fromXDR(body.signedXdr, 'Test SDF Network ; September 2015');
+const server = new Horizon.Server(HORIZON_URL);
+const tx = TransactionBuilder.fromXDR(body.signedXdr, NETWORK_PASSPHRASE);
         const submitResult = await server.submitTransaction(tx);
 
         console.log(`[Settle] Transaction successfully submitted! Hash: ${submitResult.hash}`);
@@ -139,9 +198,9 @@ export async function POST(request: Request) {
           console.error(`[Settle] HTTP Status: ${err.response.status} — ${err.response.statusText}`);
         }
         const errDetails = err.response?.data || err.message;
-        return NextResponse.json({ 
-          error: 'Horizon transaction submission failed', 
-          details: errDetails 
+        return NextResponse.json({
+          error: 'Horizon transaction submission failed',
+          details: errDetails
         }, { status: 500 });
       }
     }
@@ -153,22 +212,32 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Missing required parameters (ensure Freighter address is provided)' }, { status: 400 });
     }
 
+    // ── INPUT VALIDATION ───────────────────────────────────────────────────
+    console.log('[Settle] Validating input parameters...');
+    const validatedAssetId = validateAssetId(assetId);
+    const validatedAmount = validateAmount(amount);
+    const validatedSourceAddress = validateStellarAddress(sourceAddress);
+    const validatedEphemeralPublicKey = validateEphemeralPublicKey(ephemeralPublicKey);
+    const validatedIv = validateHex(iv, 12);
+    const validatedTag = validateHex(tag, 16);
+    const validatedCiphertext = validateHex(ciphertext, 0); // ciphetext can be any length (0 bytes min)
+
     // ── Step 0: Query the REAL on-chain face_value via direct Soroban RPC (no WSL subprocess)
     // Root cause of prior ETIMEDOUT: WSL2 child processes spawned from Windows Node lose
     // their network bridge. Fix: call the Soroban JSON-RPC directly from Node's own network.
-    console.log(`[Settle] Querying contract for real face value of asset ${assetId} via Soroban RPC...`);
+    console.log(`[Settle] Querying contract for real face value of asset ${validatedAssetId} via Soroban RPC...`);
     let faceValue = '';
     try {
-      const rpcServer = new StellarRpc.Server('https://soroban-testnet.stellar.org');
-      const contract = new Contract(CONTRACT_ID);
+      const rpcServer = new StellarRpc.Server(SOROBAN_RPC_URL);
+      const contract = new Contract(SETTLEMENT_CONTRACT_ID);
       // Build an invokeHostFunction operation for get_asset(asset_id: u32)
-      const op = contract.call('get_asset', xdr.ScVal.scvU32(Number(assetId)));
+      const op = contract.call('get_asset', xdr.ScVal.scvU32(validatedAssetId));
       // We need a dummy source account to simulate — use a well-known funded testnet account
       // or the ISSUER address. simulateTransaction doesn't require signing.
       const sourceAccount = await rpcServer.getAccount(ISSUER);
       const tx = new TransactionBuilder(sourceAccount, {
         fee: '100',
-        networkPassphrase: 'Test SDF Network ; September 2015',
+        networkPassphrase: NETWORK_PASSPHRASE,
       })
         .addOperation(op)
         .setTimeout(30)
@@ -177,9 +246,9 @@ export async function POST(request: Request) {
       const simResult = await rpcServer.simulateTransaction(tx);
       if (!StellarRpc.Api.isSimulationSuccess(simResult)) {
         const errMsg = (simResult as any).error ?? JSON.stringify(simResult);
-        console.error(`[Settle][Step0] Simulation failed for asset ${assetId}:`, errMsg);
+        console.error(`[Settle][Step0] Simulation failed for asset ${validatedAssetId}:`, errMsg);
         return NextResponse.json({
-          error: `Could not retrieve on-chain asset details for ID ${assetId}. Please ensure the asset has been minted by the issuer.`,
+          error: `Could not retrieve on-chain asset details for ID ${validatedAssetId}. Please ensure the asset has been minted by the issuer.`,
           details: errMsg
         }, { status: 404 });
       }
@@ -210,29 +279,28 @@ export async function POST(request: Request) {
         throw new Error('face_value missing from contract response map');
       }
       faceValue = String(assetInfo.face_value);
-      console.log(`[Settle][Step0] RPC success — asset ${assetId}: face_value=${faceValue}, settled=${assetInfo.settled}`);
+      console.log(`[Settle][Step0] RPC success — asset ${validatedAssetId}: face_value=${faceValue}, settled=${assetInfo.settled}`);
     } catch (rpcErr: any) {
       console.error('[Settle][Step0] Soroban RPC query failed:', rpcErr?.message ?? rpcErr);
       return NextResponse.json({
-        error: `Could not retrieve on-chain asset details for ID ${assetId}. Please ensure the asset has been minted by the issuer.`,
+        error: `Could not retrieve on-chain asset details for ID ${validatedAssetId}. Please ensure the asset has been minted by the issuer.`,
         details: rpcErr?.message
       }, { status: 404 });
     }
 
-    console.log(`[Settle] Asset ${assetId} | amount=${amount} | realFaceValue=${faceValue} | source=${sourceAddress}`);
+    console.log(`[Settle] Asset ${validatedAssetId} | amount=${validatedAmount} | realFaceValue=${faceValue} | source=${validatedSourceAddress}`);
 
     // ── Step 1: Generate fresh random blinding salt (per-request) ───────────
     // randomBytes(30) → BigInt so it fits safely in the BLS12-381 scalar field
     const salt = BigInt('0x' + crypto.randomBytes(30).toString('hex')).toString();
     console.log(`[ZK] Fresh salt generated (first 16 chars): ${salt.substring(0, 16)}...`);
 
-    const now = Date.now();
-    const prefix = `settle_${assetId}_${now}`;
+    const prefix = sanitizeFilePrefix(`settle_${validatedAssetId}_${Date.now()}`);
 
     // Input JSON for fullProve — commitment is NOT provided; the circuit computes it
     const inputData = {
       target_face_value: faceValue,
-      settlement_amount: String(amount),
+      settlement_amount: validatedAmount,
       blinding_salt: salt
     };
 
@@ -328,7 +396,7 @@ export async function POST(request: Request) {
 
     // ── Step 4: Asset verification checks on-chain ──────────────────────────
     // The asset must have been pre-minted by the issuer. We do not auto-mint on demand.
-    console.log(`[Settle] Asset verification check for ID ${assetId}...`);
+    console.log(`[Settle] Asset verification check for ID ${validatedAssetId}...`);
 
     // ── Step 5: Build unsigned settle_asset XDR via Soroban RPC (no WSL subprocess)
     // Same ETIMEDOUT root cause as Step 0: WSL2 child network bridge broken for Windows Node children.
@@ -340,10 +408,10 @@ export async function POST(request: Request) {
     const hexToScvBytes = (hex: string) => xdr.ScVal.scvBytes(Buffer.from(hex, 'hex'));
 
     // Normalise ephemeral_public_key: must be 65 bytes (uncompressed, with 04 prefix)
-    const epkHex = (ephemeralPublicKey.startsWith('04') ? ephemeralPublicKey : '04' + ephemeralPublicKey).substring(0, 130);
+    const epkHex = validatedEphemeralPublicKey.substring(0, 130);
     // iv: 12 bytes (24 hex chars), tag: 16 bytes (32 hex chars)
-    const ivHex  = iv.substring(0, 24);
-    const tagHex = tag.substring(0, 32);
+    const ivHex  = validatedIv.substring(0, 24);
+    const tagHex = validatedTag.substring(0, 32);
 
     // Read the proof/vk JSON files written in Step 3 (already on disk from circom2soroban)
     const proofArgs = JSON.parse(readFileSync(proofArgsWinPath, 'utf8')) as { a: string; b: string; c: string };
@@ -370,27 +438,27 @@ export async function POST(request: Request) {
 
     let unsignedXdr: string;
     try {
-      const rpcServer5 = new StellarRpc.Server('https://soroban-testnet.stellar.org');
-      const contract5  = new Contract(CONTRACT_ID);
+      const rpcServer5 = new StellarRpc.Server(SOROBAN_RPC_URL);
+      const contract5  = new Contract(SETTLEMENT_CONTRACT_ID);
 
       const settleOp = contract5.call(
         'settle_asset',
-        xdr.ScVal.scvU32(Number(assetId)),
+        xdr.ScVal.scvU32(validatedAssetId),
         scvVk,
         scvProof,
         hexToScvBytes(commitmentHex),
-        hexToScvBytes(epkHex),
-        hexToScvBytes(ivHex),
-        hexToScvBytes(tagHex),
-        hexToScvBytes(ciphertext),
+        hexToScvBytes(validatedEphemeralPublicKey),
+        hexToScvBytes(validatedIv),
+        hexToScvBytes(validatedTag),
+        hexToScvBytes(validatedCiphertext),
       );
 
       // Use sourceAddress as the transaction source — same as --source-account in the CLI call.
       // getAccount will fetch the current sequence number from the network.
-      const srcAccount = await rpcServer5.getAccount(sourceAddress);
+      const srcAccount = await rpcServer5.getAccount(validatedSourceAddress);
       const buildTx = new TransactionBuilder(srcAccount, {
         fee: '100',
-        networkPassphrase: 'Test SDF Network ; September 2015',
+        networkPassphrase: NETWORK_PASSPHRASE,
       })
         .addOperation(settleOp)
         .setTimeout(30)
@@ -426,3 +494,5 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
+
+export const POST = withAuth(POSTHandler);
