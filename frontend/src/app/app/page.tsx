@@ -780,16 +780,8 @@ export default function AppDashboard() {
     }
   };
 
-  // Local initialization state to show brief loading while context resolves
-  const [isInitialized, setIsInitialized] = useState(false);
-  const WALLET_INIT_TIMEOUT_MS = 500;
-
-  useEffect(() => {
-    const timerId = setTimeout(() => setIsInitialized(true), WALLET_INIT_TIMEOUT_MS);
-    return () => clearTimeout(timerId);
-  }, []);
-
-  if (!isInitialized) {
+  // Guard render until wallet connection check completes — prevents /login flash
+  if (!hasCheckedConnection) {
     return (
       <div className="h-screen w-screen bg-[#0A0A0A] flex items-center justify-center font-mono">
         <div className="flex flex-col items-center gap-3">

@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react';
 import { isConnected, requestAccess, isAvailable } from '@stellar/freighter-api';
 
 interface WalletState {
@@ -33,9 +33,14 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const [isConnecting, setIsConnecting] = useState(false);
   const [isCheckingConnection, setIsCheckingConnection] = useState(true);
   const [hasCheckedConnection, setHasCheckedConnection] = useState(false);
+  const aliveRef = useRef(true);
+
+  const safeSetState = useCallback(<T,>(setter: (val: T) => void, val: T) => {
+    if (aliveRef.current) setter(val);
+  }, []);
 
   const applyWalletAddress = useCallback((nextAddress: string | null) => {
-    setAddress(nextAddress);
+    safeSetState(setAddress, nextAddress);
 
     if (typeof window === 'undefined') {
       return;
@@ -47,24 +52,27 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     }
 
     sessionStorage.removeItem('lantern_wallet_address');
-  }, []);
+  }, [safeSetState]);
 
   const syncWalletConnection = useCallback(async (allowPrompt = false): Promise<string | null> => {
-    setIsCheckingConnection(true);
+    safeSetState(setIsCheckingConnection, true);
 
     try {
       const avail = await isAvailable();
-      setIsInstalled(!!avail);
+      if (!aliveRef.current) return null;
+      safeSetState(setIsInstalled, !!avail);
 
       const status = await isConnected();
+      if (!aliveRef.current) return null;
       const connected = !!status.isConnected;
 
       if (!connected) {
         if (allowPrompt) {
           const access = await requestAccess();
+          if (!aliveRef.current) return null;
           if (!access.error && access.address) {
             applyWalletAddress(access.address);
-            setIsInstalled(true);
+            safeSetState(setIsInstalled, true);
             return access.address;
           }
         }
@@ -83,54 +91,54 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 
       if (allowPrompt) {
         const access = await requestAccess();
+        if (!aliveRef.current) return null;
         if (!access.error && access.address) {
           applyWalletAddress(access.address);
-          setIsInstalled(true);
+          safeSetState(setIsInstalled, true);
           return access.address;
         }
       }
 
       return null;
     } catch {
-      setIsInstalled(false);
+      if (!aliveRef.current) return null;
+      safeSetState(setIsInstalled, false);
       applyWalletAddress(null);
       return null;
     } finally {
-      setHasCheckedConnection(true);
-      setIsCheckingConnection(false);
+      if (aliveRef.current) {
+        safeSetState(setHasCheckedConnection, true);
+        safeSetState(setIsCheckingConnection, false);
+      }
     }
-  }, [applyWalletAddress]);
+  }, [applyWalletAddress, safeSetState]);
 
   useEffect(() => {
-    let cancelled = false;
+    aliveRef.current = true;
 
-    const init = async () => {
+    (async () => {
       try {
         await syncWalletConnection(false);
       } catch {
-        if (!cancelled) setIsInstalled(false);
-        if (!cancelled) {
+        if (aliveRef.current) {
+          safeSetState(setIsInstalled, false);
           applyWalletAddress(null);
-          setHasCheckedConnection(true);
-          setIsCheckingConnection(false);
+          safeSetState(setHasCheckedConnection, true);
+          safeSetState(setIsCheckingConnection, false);
         }
       }
-    };
+    })();
 
-    init();
-    return () => { cancelled = true; };
-  }, [applyWalletAddress, syncWalletConnection]);
+    return () => { aliveRef.current = false; };
+  }, [applyWalletAddress, safeSetState, syncWalletConnection]);
 
   const connect = useCallback(async (): Promise<string | null> => {
-    setIsConnecting(true);
+    safeSetState(setIsConnecting, true);
     try {
       const addr = await syncWalletConnection(true);
+      if (!aliveRef.current) return null;
       if (!addr) {
-        setIsInstalled(false);
-      }
-
-      if (addr) {
-        // Account exists and is connected
+        safeSetState(setIsInstalled, false);
       }
 
       return addr;
@@ -138,18 +146,18 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       console.error('[Wallet] Connection error:', err);
       return null;
     } finally {
-      setIsConnecting(false);
+      if (aliveRef.current) safeSetState(setIsConnecting, false);
     }
-  }, [syncWalletConnection]);
+  }, [syncWalletConnection, safeSetState]);
 
   const refreshConnection = useCallback(async (): Promise<string | null> => {
     return syncWalletConnection(false);
   }, [syncWalletConnection]);
 
   const disconnect = useCallback(() => {
-    setAddress(null);
+    safeSetState(setAddress, null);
     sessionStorage.removeItem('lantern_wallet_address');
-  }, []);
+  }, [safeSetState]);
 
   return (
     <WalletContext.Provider

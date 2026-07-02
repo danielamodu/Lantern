@@ -20,24 +20,29 @@ export default function LoginPage() {
     const maxWaitMs = 3000;
     const startedAt = Date.now();
 
-    const poll = async () => {
+    const poll = () => {
       if (cancelled) {
         return;
       }
 
-      try {
-        const status = await freighterIsConnected();
-
-        if (status.isConnected) {
-          setIsFreighterDetected(true);
-          return;
-        }
-      } catch {
-        // Keep polling until timeout; the extension may still be initializing.
+      // SSR-safe direct window check (Freighter v6 injects as window["#sideWallet"])
+      if (typeof window !== 'undefined' && (window as any)['#sideWallet']) {
+        setIsFreighterDetected(true);
+        return;
       }
 
-      if (Date.now() - startedAt >= maxWaitMs) {
-        setIsFreighterDetected(false);
+      const elapsed = Date.now() - startedAt;
+      if (elapsed >= maxWaitMs) {
+        // Try the SDK API one last time before giving up
+        freighterIsConnected().then(status => {
+          if (!cancelled && status.isConnected) {
+            setIsFreighterDetected(true);
+          } else if (!cancelled) {
+            setIsFreighterDetected(false);
+          }
+        }).catch(() => {
+          if (!cancelled) setIsFreighterDetected(false);
+        });
         return;
       }
 
