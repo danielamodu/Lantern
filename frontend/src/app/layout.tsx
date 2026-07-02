@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { JetBrains_Mono, Newsreader } from "next/font/google";
+import { WalletProvider } from "@/lib/WalletContext";
 import "./globals.css";
 
 const jetbrainsMono = JetBrains_Mono({
@@ -38,7 +39,9 @@ export default function RootLayout({
       lang="en"
       className={`${jetbrainsMono.variable} ${newsreader.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col">
+        <WalletProvider>{children}</WalletProvider>
+      </body>
     </html>
   );
 }

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import MiniFooter from '@/components/MiniFooter';
 import Link from 'next/link';
 import { 
@@ -23,6 +23,7 @@ import {
   Wallet
 } from 'lucide-react';
 import { Button } from "@/components/ui/button";
+import { useWallet } from '@/lib/WalletContext';
 
 interface ZkPolicy {
   id: string;
@@ -68,7 +69,16 @@ const MOCK_ASSETS: MockAsset[] = [
   { id: 903, name: 'Stellar Carbon Trust #903', faceValue: 500 }
 ];
 
+function getCompliantAmount(asset: MockAsset, policy: ZkPolicy): number {
+  if (policy.id === 'yield') {
+    return asset.faceValue * 1.05;
+  }
+
+  return asset.faceValue;
+}
+
 export default function ZkPlayground() {
+  const { address: walletAddress } = useWallet();
   const [selectedAsset, setSelectedAsset] = useState<MockAsset>(MOCK_ASSETS[0]);
   const [selectedPolicy, setSelectedPolicy] = useState<ZkPolicy>(POLICIES[0]);
   const [settlementAmount, setSettlementAmount] = useState<number>(1000);
@@ -82,30 +92,6 @@ export default function ZkPlayground() {
   
    // Mobile header toggles
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const [walletAddress, setWalletAddress] = useState<string | null>(null);
-
-  // Check if wallet connection exists to populate view layout elements
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const savedAddress = sessionStorage.getItem('lantern_wallet_address');
-      if (savedAddress) {
-        setWalletAddress(savedAddress);
-      }
-    }
-  }, []);
-
-  // Keep settlement amount locked to asset face value when selected asset changes (for ease of matching)
-  useEffect(() => {
-    if (selectedPolicy.id === 'exact') {
-      setSettlementAmount(selectedAsset.faceValue);
-    } else if (selectedPolicy.id === 'yield') {
-      setSettlementAmount(selectedAsset.faceValue * 1.05);
-    } else {
-      setSettlementAmount(selectedAsset.faceValue);
-    }
-    setProvingStatus('idle');
-    setProvingLogs([]);
-  }, [selectedAsset, selectedPolicy]);
 
   const handleProve = () => {
     setIsProving(true);
@@ -302,7 +288,12 @@ export default function ZkPlayground() {
                   return (
                     <button
                       key={asset.id}
-                      onClick={() => setSelectedAsset(asset)}
+                      onClick={() => {
+                        setSelectedAsset(asset);
+                        setSettlementAmount(getCompliantAmount(asset, selectedPolicy));
+                        setProvingStatus('idle');
+                        setProvingLogs([]);
+                      }}
                       className={`w-full flex items-center justify-between p-3 border text-left text-xs transition-all ${
                         isSelected 
                           ? 'border-[#F2F2F0] bg-[#0A0A0A]' 
@@ -326,7 +317,12 @@ export default function ZkPlayground() {
                   return (
                     <button
                       key={policy.id}
-                      onClick={() => setSelectedPolicy(policy)}
+                      onClick={() => {
+                        setSelectedPolicy(policy);
+                        setSettlementAmount(getCompliantAmount(selectedAsset, policy));
+                        setProvingStatus('idle');
+                        setProvingLogs([]);
+                      }}
                       className={`w-full p-4 border text-left transition-all ${
                         isSelected 
                           ? 'border-[#F2F2F0] bg-[#0A0A0A]' 
@@ -367,13 +363,7 @@ export default function ZkPlayground() {
                 <div className="flex gap-2">
                   <button 
                     onClick={() => {
-                      if (selectedPolicy.id === 'exact') {
-                        setSettlementAmount(selectedAsset.faceValue);
-                      } else if (selectedPolicy.id === 'yield') {
-                        setSettlementAmount(selectedAsset.faceValue * 1.05);
-                      } else {
-                        setSettlementAmount(selectedAsset.faceValue);
-                      }
+                      setSettlementAmount(getCompliantAmount(selectedAsset, selectedPolicy));
                     }}
                     className="flex-1 py-2 border border-[#3A3A3A] hover:border-[#8A8A8A] bg-transparent text-[10px] uppercase font-bold"
                   >
@@ -416,7 +406,7 @@ export default function ZkPlayground() {
                 {provingLogs.length === 0 ? (
                   <div className="h-full flex flex-col items-center justify-center text-center opacity-40 py-8">
                     <Lock className="w-8 h-8 mb-2" />
-                    <p>Enter parameters on the left and click "RUN SIMULATED PROOF" to view the conceptual timeline</p>
+                      <p>Enter parameters on the left and click &quot;RUN SIMULATED PROOF&quot; to view the conceptual timeline</p>
                   </div>
                 ) : (
                   provingLogs.map((log, index) => {

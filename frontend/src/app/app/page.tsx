@@ -22,12 +22,15 @@ import {
   Cpu,
   Layers
 } from 'lucide-react';
-import { requestAccess, signTransaction, signMessage, isConnected } from '@stellar/freighter-api';
+import { signTransaction } from '@stellar/freighter-api';
+import { useWallet } from '@/lib/WalletContext';
+import { SETTLEMENT_CONTRACT_ID, NETWORK_PASSPHRASE } from '@/lib/config';
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { CiphertextReveal } from './CiphertextReveal';
 import MiniFooter from '@/components/MiniFooter';
+import { decryptSettlementClient, EncryptedPayload } from '@/utils/clientCrypto';
 
 interface RwaAsset {
   id: number;
@@ -48,7 +51,8 @@ const SEEDED_ASSETS: RwaAsset[] = [
 ];
 
 const VERIFIER_ID = process.env.NEXT_PUBLIC_VERIFIER_ID || 'CCRUK3TL4BQMSOI5KHC4DO2VIJ7P7TTWFVXYRKPCVGMCLW2YIAO5JI6B';
-const CONTRACT_ID = process.env.NEXT_PUBLIC_CONTRACT_ID || 'CACFHOCMFKHVUR4UKS5W5XG4QCQBDCDDDT54SOOMHYBHKZIQA43MREUT';
+const HORIZON_URL = process.env.NEXT_PUBLIC_HORIZON_URL || 'https://horizon-testnet.stellar.org';
+const SOROBAN_RPC_URL = process.env.NEXT_PUBLIC_SOROBAN_RPC_URL || 'https://soroban-testnet.stellar.org';
 
 function base64UrlToHex(b64url: string): string {
   const b64 = b64url.replace(/-/g, '+').replace(/_/g, '/');
@@ -57,26 +61,106 @@ function base64UrlToHex(b64url: string): string {
   return Array.from(bin, c => c.charCodeAt(0).toString(16).padStart(2, '0')).join('');
 }
 
-async function getAuthHeaders(): Promise<Record<string, string>> {
-  const nonce = crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(16);
-  const msgResult = await signMessage(`LANtern-auth-${nonce}`, {
-    networkPassphrase: 'Test SDF Network ; September 2015'
-  });
-  if (msgResult.error || !msgResult.signedMessage) {
-    console.warn('[Auth] signMessage failed, sending without auth headers');
-    return { 'x-nonce': nonce };
+const ASSET_CLASS_MAP: Record<string, string> = {
+  'Government Bond': 'TreasuryBill',
+  'Real Estate': 'InvoiceReceivable',
+  'Corporate Debt': 'CorporateBond',
+  'Precious Metals': 'CommodityToken',
+  'Carbon Credit': 'CarbonCredit',
+};
+
+let sessionTokenPromise: Promise<string | null> | null = null;
+
+async function establishSession(walletAddress: string): Promise<string | null> {
+  try {
+    const challengeRes = await fetch('/api/auth/session', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'challenge', sourceAddress: walletAddress }),
+    });
+    const challengeData = await challengeRes.json();
+    if (!challengeData.success) throw new Error(challengeData.error || 'Challenge failed');
+
+    const signResult = await signTransaction(challengeData.unsignedXdr, {
+      networkPassphrase: NETWORK_PASSPHRASE,
+    });
+    const signedXdr = typeof signResult === 'string'
+      ? signResult
+      : (signResult as any).result ?? (signResult as any).signedTxXdr ?? '';
+
+    if (!signedXdr) throw new Error('Failed to sign auth challenge');
+
+    const verifyRes = await fetch('/api/auth/session', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ signedXdr, sourceAddress: walletAddress }),
+    });
+    const verifyData = await verifyRes.json();
+    if (!verifyData.success) throw new Error(verifyData.error || 'Verification failed');
+
+    return verifyData.token;
+  } catch (err) {
+    console.error('[Auth] Session establishment failed:', err);
+    return null;
   }
-  const sig = typeof msgResult.signedMessage === 'string'
-    ? msgResult.signedMessage
-    : Buffer.from(msgResult.signedMessage).toString('hex');
-  return {
-    'x-signer-address': msgResult.signerAddress,
-    'x-signature': sig.padStart(128, '0').substring(0, 128),
-    'x-nonce': nonce
-  };
+}
+
+function getSessionToken(): string | null {
+  if (typeof window !== 'undefined') {
+    return sessionStorage.getItem('lantern_session_token');
+  }
+  return null;
+}
+
+function setSessionToken(token: string | null) {
+  if (typeof window !== 'undefined') {
+    if (token) {
+      sessionStorage.setItem('lantern_session_token', token);
+    } else {
+      sessionStorage.removeItem('lantern_session_token');
+    }
+  }
+}
+
+async function getAuthHeaders(fallbackSignerAddress?: string): Promise<Record<string, string>> {
+  const signerAddress = fallbackSignerAddress;
+  if (!signerAddress) {
+    return {};
+  }
+
+  let token = getSessionToken();
+  if (!token && sessionTokenPromise) {
+    token = await sessionTokenPromise;
+  }
+  if (!token) {
+    sessionTokenPromise = establishSession(signerAddress);
+    token = await sessionTokenPromise;
+    if (token) {
+      setSessionToken(token);
+    }
+  }
+
+  if (token) {
+    return { 'x-session-token': token, 'x-signer-address': signerAddress };
+  }
+
+  return { 'x-signer-address': signerAddress };
+}
+
+async function authedFetch(url: string, opts: RequestInit = {}, signerAddress?: string): Promise<Response> {
+  const authHeaders = await getAuthHeaders(signerAddress);
+  return fetch(url, {
+    ...opts,
+    headers: {
+      'Content-Type': 'application/json',
+      ...opts.headers,
+      ...authHeaders,
+    },
+  });
 }
 
 export default function AppDashboard() {
+  const { address: walletAddress, isInstalled: isFreighterInstalled, isConnecting: isConnectingWallet, hasCheckedConnection, connect: connectWallet } = useWallet();
   const [assets, setAssets] = useState<RwaAsset[]>(SEEDED_ASSETS);
   const [selectedAsset, setSelectedAsset] = useState<RwaAsset | null>(SEEDED_ASSETS[0]);
   
@@ -126,7 +210,7 @@ export default function AppDashboard() {
     const time = new Date().toLocaleTimeString();
     return [
       `[${time}] [SYSTEM] ZK Telemetry Engine initialized. Listening for compliance proofs...`,
-      `[${time}] [SYSTEM] Connected to Soroban Contract: ${CONTRACT_ID}`,
+      `[${time}] [SYSTEM] Connected to Soroban Contract: ${SETTLEMENT_CONTRACT_ID}`,
       `[${time}] [SYSTEM] Verifier Identity key active: CCRUK3TL4BQMSOI5...`
     ];
   });
@@ -136,109 +220,37 @@ export default function AppDashboard() {
     setTelemetryLogs(prev => [...prev.slice(-49), `[${time}] ${msg}`]);
   };
 
-  // Auth state
-  const [isAuthReady, setIsAuthReady] = useState(false);
-  const [authReadyTimer, setAuthReadyTimer] = useState(0);
-  const [authHeaders, setAuthHeaders] = useState<Record<string, string>>({});
-  const [loginError, setLoginError] = useState('');
-  const [isVerifying, setIsVerifying] = useState(false);
-  const [authTimeout, setAuthTimeout] = useState(120);
-  const [authAttempts, setAuthAttempts] = useState(0);
-  const [authWarning, setAuthWarning] = useState<string | null>(null);
-  const [hasCreatedAuthOnce, setHasCreatedAuthOnce] = useState(false);
-  const [isAuthRefreshing, setIsAuthRefreshing] = useState(false);
-  const [fallbackAuthUsed, setFallbackAuthUsed] = useState(false);
-  const [authDebugInfo, setAuthDebugInfo] = useState<any>(null);
-
-  const DEFAULT_AUTH_TIMEOUT_SECONDS = 120;
-  const MAX_AUTH_ATTEMPTS = 3;
-
-  const logAuthEvent = (event: string, details?: any) => {
-    console.log(`[AUTH] ${event}:`, details);
-  };
-
-  // Share view key modal state
+  // Auth state — auth headers are now generated lazily per-request via authedFetch
   const [showShareModal, setShowShareModal] = useState(false);
   const [activeTab, setActiveTab] = useState<'overview' | 'keys' | 'decrypt' | 'issuance'>('overview');
-
-  // Freighter Wallet state
-  const [walletAddress, setWalletAddress] = useState<string | null>(null);
-  const [isFreighterInstalled, setIsFreighterInstalled] = useState<boolean | null>(null);
-  const [isConnectingWallet, setIsConnectingWallet] = useState(false);
   const [showOnboardModal, setShowOnboardModal] = useState(false);
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
-  const [showLogin, setShowLogin] = useState(true);
-
-  useEffect(() => {
-    let authInterval: NodeJS.Timeout;
-
-    const initializeAuth = async () => {
-      try {
-        const currentAuthHeaders = await getAuthHeaders();
-        logAuthEvent('[INIT] Created auth headers', { 
-          hasAuth: !!currentAuthHeaders['x-signer-address']
-        });
-        setAuthHeaders(currentAuthHeaders);
-        setIsAuthReady(true);
-        setHasCreatedAuthOnce(true);
-        setAuthAttempts(0);
-        setAuthWarning(null);
-      } catch (err) {
-        logAuthEvent('[INIT] Auth initialization failed', err);
-      }
-    };
-
-    initializeAuth();
-
-    authInterval = setInterval(() => {
-      if (!isAuthRefreshing && isAuthReady) {
-        setIsAuthRefreshing(true);
-        logAuthEvent('[REFRESH] Regenerating auth headers...');
-        
-        const refreshTimer = setTimeout(async () => {
-          try {
-            const currentAuthHeaders = await getAuthHeaders();
-            setAuthHeaders(currentAuthHeaders);
-            setIsAuthReady(true);
-            setAuthReadyTimer(DEFAULT_AUTH_TIMEOUT_SECONDS);
-            logAuthEvent('[REFRESH] Auth headers refreshed successfully');
-          } catch (err) {
-            logAuthEvent('[REFRESH] Failed to refresh auth headers', err);
-            setAuthAttempts(prev => prev + 1);
-            if (authAttempts >= MAX_AUTH_ATTEMPTS) {
-              setAuthWarning('Authentication service unavailable. Using limited functionality.');
-              setFallbackAuthUsed(true);
-            }
-          } finally {
-            setIsAuthRefreshing(false);
-          }
-        }, 1000);
-        
-        return () => clearTimeout(refreshTimer);
-      }
-    }, 110 * 1000);
-
-    return () => clearInterval(authInterval);
-  }, [isAuthRefreshing]);
 
   // Generate dynamic keypair on mount
   useEffect(() => {
     generateNewKeys();
-    
-    const savedAddress = sessionStorage.getItem('lantern_wallet_address');
-    if (savedAddress) {
-      setWalletAddress(savedAddress);
-      setIsAuthenticated(true);
-      setShowLogin(false);
-    } else {
-      window.location.href = '/login';
-      return;
-    }
 
-    checkFreighter();
+    // Hydrate asset list from live on-chain API instead of seeded data
+    const fetchLiveAssets = async () => {
+      try {
+        const res = await fetch('/api/assets/list');
+        const data = await res.json();
+        if (data.success && data.assets && data.assets.length > 0) {
+          const liveAssets: RwaAsset[] = data.assets.map((a: any) => ({
+            id: a.id,
+            name: a.name,
+            faceValue: a.faceValue,
+            status: a.status as RwaAsset['status'],
+            txHash: a.txHash,
+          }));
+          setAssets(liveAssets);
+          setSelectedAsset(liveAssets[0]);
+          return;
+        }
+      } catch (err) {
+        console.error("Failed to fetch live assets from API, falling back to seeded data:", err);
+      }
 
-    // Sync status of seeded assets on-chain
-    const syncAssets = async () => {
+      // Fallback: sync status of seeded assets on-chain
       try {
         const res = await fetch('/api/assets/sync', {
           method: 'POST',
@@ -253,7 +265,7 @@ export default function AppDashboard() {
               if (syncInfo && syncInfo.exists) {
                 return {
                   ...asset,
-                  status: (syncInfo.settled ? 'Settled' : 'Pending') as 'Settled' | 'Pending',
+                  status: (syncInfo.status === 'Settled' ? 'Settled' : 'Pending') as 'Settled' | 'Pending',
                   faceValue: syncInfo.faceValue
                 };
               }
@@ -268,7 +280,7 @@ export default function AppDashboard() {
             if (syncInfo && syncInfo.exists) {
               return {
                 ...prev,
-                status: (syncInfo.settled ? 'Settled' : 'Pending') as 'Settled' | 'Pending',
+                status: (syncInfo.status === 'Settled' ? 'Settled' : 'Pending') as 'Settled' | 'Pending',
                 faceValue: syncInfo.faceValue
               };
             }
@@ -279,7 +291,7 @@ export default function AppDashboard() {
         console.error("Failed to sync on-chain assets on mount:", err);
       }
     };
-    syncAssets();
+    fetchLiveAssets();
 
     // Check URL query parameters for pre-filled view key (Deep Link sharing)
     if (typeof window !== 'undefined') {
@@ -289,61 +301,27 @@ export default function AppDashboard() {
       if (tabParam === 'overview' || tabParam === 'keys' || tabParam === 'decrypt') {
         setActiveTab(tabParam as any);
       }
-
-      const keyParam = params.get('viewKey') || params.get('key');
-      if (keyParam) {
-        setDecPrivKey(keyParam);
-        // Transition immediately to the Decryption Vault tab so they see it
-        setActiveTab('decrypt');
-      }
     }
   }, []);
 
-  const checkFreighter = async () => {
-    try {
-      const installed = await isConnected();
-      setIsFreighterInstalled(!!installed);
-    } catch {
-      setIsFreighterInstalled(false);
+  useEffect(() => {
+    if (!hasCheckedConnection) {
+      return;
     }
-  };
 
-  const connectWallet = async () => {
-    setIsConnectingWallet(true);
+    if (!walletAddress) {
+      window.location.href = '/login';
+    }
+  }, [hasCheckedConnection, walletAddress]);
+
+  const handleConnectWallet = async () => {
     setSettleError('');
-    try {
-      const installed = await isConnected();
-      if (!installed) {
-        setIsFreighterInstalled(false);
-        setIsConnectingWallet(false);
-        return;
-      }
-      setIsFreighterInstalled(true);
-      const res = await requestAccess();
-      let address = '';
-      if (typeof res === 'string') {
-        address = res;
-      } else if (res && typeof res === 'object' && 'address' in res) {
-        address = res.address;
-      } else {
-        throw new Error("Could not retrieve address from Freighter");
-      }
-
-      setWalletAddress(address);
-      
-      // Auto-fund testnet account with Friendbot for seamless developer testing
-      fetch("https://friendbot.stellar.org/?addr=" + address).catch(() => {});
-
-      // Onboarding check (show modal only once)
+    const addr = await connectWallet();
+    if (addr) {
       const hasOnboarded = localStorage.getItem('lantern_onboarded');
       if (!hasOnboarded) {
         setShowOnboardModal(true);
       }
-    } catch (err: any) {
-      console.error("Wallet connection error:", err);
-      setSettleError("Failed to connect Freighter wallet.");
-    } finally {
-      setIsConnectingWallet(false);
     }
   };
 
@@ -369,8 +347,6 @@ export default function AppDashboard() {
       setPubViewKey(pubHex);
       setPrivViewKey(privHex);
       setDecPrivKey(privHex);
-      sessionStorage.setItem('lantern_pub_view_key', pubHex);
-      sessionStorage.setItem('lantern_priv_view_key', privHex);
     } catch (err) {
       console.error("Failed to generate keys:", err);
     } finally {
@@ -381,6 +357,7 @@ export default function AppDashboard() {
   // Settle asset handler (with Freighter Wallet signing)
   const handleSettle = async () => {
     if (!selectedAsset) return;
+    if (!hasCheckedConnection) return;
     if (!walletAddress) {
       setSettleError("Please connect your Freighter wallet to sign the settlement.");
       return;
@@ -395,12 +372,7 @@ export default function AppDashboard() {
 
     // 1. Validate variables population and log the payload exactly right before it is sent
     const currentAmount = String(settleAmount || '');
-    const currentPublicKey = pubViewKey || sessionStorage.getItem('lantern_pub_view_key');
-
-    console.log(`[handleSettle] Initiating ECIES encryption payload check:`, {
-      amount: currentAmount,
-      auditorPublicKey: currentPublicKey
-    });
+    const currentPublicKey = pubViewKey;
 
     addTelemetryLog(`[INIT] Starting private settlement for asset #${selectedAsset.id} (Target Value: $${selectedAsset.faceValue})...`);
     addTelemetryLog(`[INIT] Target Amount: $${currentAmount} | Policy: ${selectedPolicy}`);
@@ -417,17 +389,13 @@ export default function AppDashboard() {
     try {
       addTelemetryLog('[ZK-ECIES] Generating ephemeral view keypair and performing off-chain encryption...');
       // 1. Generate client-side encryption envelope
-      const encryptRes = await fetch('/api/encrypt', {
+      const encryptRes = await authedFetch('/api/encrypt', {
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          ...authHeaders
-        },
         body: JSON.stringify({
           amount: currentAmount,
           auditorPublicKey: currentPublicKey
         })
-      });
+      }, walletAddress ?? undefined);
       const encryptedData = await encryptRes.json();
 
       if (encryptedData.error) {
@@ -439,12 +407,8 @@ export default function AppDashboard() {
 
       addTelemetryLog('[ZK-PROOF] Witness constraints matching... Proving amount matches policy on-chain...');
 
-      const prepareRes = await fetch('/api/settle', {
+      const prepareRes = await authedFetch('/api/settle', {
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          ...authHeaders
-        },
         body: JSON.stringify({
           assetId: selectedAsset.id,
           amount: currentAmount,
@@ -455,7 +419,7 @@ export default function AppDashboard() {
           ciphertext: encryptedData.ciphertextHex,
           sourceAddress: walletAddress
         })
-      });
+      }, walletAddress ?? undefined);
       const prepareData = await prepareRes.json();
 
       if (prepareData.error) {
@@ -482,7 +446,7 @@ export default function AppDashboard() {
       addTelemetryLog('[WALLET] Requesting signature from Freighter wallet...');
       console.log(`[Freighter] Requesting signature for XDR...`);
       const signResult = await signTransaction(prepareData.unsignedXdr, { 
-        networkPassphrase: "Test SDF Network ; September 2015" 
+        networkPassphrase: NETWORK_PASSPHRASE
       });
       // Freighter v6 returns { result: string }; older versions return string or { signedTxXdr }
       const signedXdr = typeof signResult === 'string'
@@ -501,7 +465,7 @@ export default function AppDashboard() {
         console.log('[Settle] Submitting transaction directly from browser to Horizon testnet...');
         const formData = new URLSearchParams();
         formData.append('tx', signedXdr);
-        const horizonRes = await fetch('https://horizon-testnet.stellar.org/transactions', {
+        const horizonRes = await fetch(`${HORIZON_URL}/transactions`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
           body: formData.toString()
@@ -517,14 +481,10 @@ export default function AppDashboard() {
       } catch (clientErr: any) {
         console.warn('[Settle] Browser-side Horizon submission failed, falling back to backend:', clientErr.message);
         addTelemetryLog(`[SOROBAN] Browser submission bypassed/failed. Retrying via backend node router: ${clientErr.message}`);
-        const submitRes = await fetch('/api/settle', {
+        const submitRes = await authedFetch('/api/settle', {
           method: 'POST',
-          headers: { 
-            'Content-Type': 'application/json',
-            ...authHeaders
-          },
           body: JSON.stringify({ signedXdr })
-        });
+        }, walletAddress ?? undefined);
         const submitDataBack = await submitRes.json();
         if (submitDataBack.error) {
           throw new Error(submitDataBack.error || submitDataBack.details);
@@ -566,6 +526,7 @@ export default function AppDashboard() {
   // Redeem settled asset at maturity
   const handleRedeem = async () => {
     if (!selectedAsset) return;
+    if (!hasCheckedConnection) return;
     if (!walletAddress) {
       setSettleError("Please connect your Freighter wallet to authorize redemption.");
       return;
@@ -574,18 +535,14 @@ export default function AppDashboard() {
     setIsSettling(true);
     setSettleError('');
     addTelemetryLog(`[INIT] Requesting maturity redemption for settled RWA #${selectedAsset.id} (${selectedAsset.name})...`);
-    addTelemetryLog('[WALLET] Requesting signature to execute redemption payment representing collateral unlock...');
+    addTelemetryLog('[WALLET] Requesting unsigned transaction to execute redemption...');
 
     try {
-      // 1. Prepare payment transaction via backend API
-      const prepRes = await fetch('/api/redeem/prepare', {
+      // Phase 1: Prepare unsigned transaction via backend API
+      const prepRes = await authedFetch('/api/redeem/prepare', {
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          ...authHeaders
-        },
-        body: JSON.stringify({ userAddress: walletAddress, assetId: selectedAsset.id }),
-      });
+        body: JSON.stringify({ assetId: selectedAsset.id, sourceAddress: walletAddress }),
+      }, walletAddress ?? undefined);
 
       const prepData = await prepRes.json();
       if (!prepRes.ok || prepData.error) {
@@ -594,23 +551,23 @@ export default function AppDashboard() {
 
       addTelemetryLog('[WALLET] Transaction built successfully. Requesting Freighter signature...');
 
-      // 2. Sign transaction via Freighter
-      const signedTxResult = await signTransaction(prepData.xdr, {
-        networkPassphrase: 'Test SDF Network ; September 2015',
+      // Phase 2: Sign transaction via Freighter
+      const signedTxResult = await signTransaction(prepData.unsignedXdr, {
+        networkPassphrase: NETWORK_PASSPHRASE,
       });
 
-      const signedXdr = typeof signedTxResult === 'string' 
-        ? signedTxResult 
+      const signedXdr = typeof signedTxResult === 'string'
+        ? signedTxResult
         : (signedTxResult as any)?.signedTxXdr;
 
       if (!signedXdr) {
         throw new Error('Failed to sign transaction or signature was rejected.');
       }
 
-      addTelemetryLog('[HORIZON] Submitting payment instruction to Horizon testnet...');
+      addTelemetryLog('[HORIZON] Submitting signed redemption to Horizon testnet...');
 
-      // 3. Submit transaction directly from browser to Horizon
-      const submitRes = await fetch('https://horizon-testnet.stellar.org/transactions', {
+      // Submit transaction directly from browser to Horizon
+      const submitRes = await fetch(`${HORIZON_URL}/transactions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({ tx: signedXdr }),
@@ -623,13 +580,11 @@ export default function AppDashboard() {
       }
 
       const txHash = submitData.hash;
-      addTelemetryLog(`[LEDGER] Redemption payment transaction confirmed on-chain! Hash: ${txHash}`);
-      addTelemetryLog(`[SYSTEM] Collateral cash-out approved. Locked cash collateral released to address: ${walletAddress}`);
+      addTelemetryLog(`[LEDGER] Redemption transaction confirmed on-chain! Hash: ${txHash}`);
+      addTelemetryLog(`[SYSTEM] Asset RWA #${selectedAsset.id} state updated to REDEEMED. Lifecycle closed.`);
 
-      // Update local asset status
       setAssets(prev => prev.map(a => a.id === selectedAsset.id ? { ...a, status: 'Redeemed', txHash } : a));
       setSelectedAsset(prev => prev ? { ...prev, status: 'Redeemed', txHash } : null);
-      addTelemetryLog(`[SYSTEM] Asset RWA #${selectedAsset.id} state updated to REDEEMED. Lifecycle closed.`);
     } catch (err: any) {
       console.error("Redemption error:", err);
       addTelemetryLog(`[ERROR] Redemption failed: ${err.message || err}`);
@@ -648,52 +603,73 @@ export default function AppDashboard() {
 
     setIsMinting(true);
     setSettleError('');
-    
-    // Generate a unique random ID for the asset to register on-chain
+
     const assetId = Math.floor(Math.random() * 100000) + 1000;
-    
+
     addTelemetryLog(`[INIT] Tokenizing new Real World Asset: ${newName} (Par: $${newFaceValue} USD)...`);
-    addTelemetryLog(`[LEDGER] Submitting on-chain mint_asset invocation for Asset ID #${assetId}...`);
 
     try {
-      const response = await fetch('/api/mint', {
+      // Phase 1: Build unsigned mint XDR
+      const response = await authedFetch('/api/mint', {
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          ...authHeaders
-        },
-        body: JSON.stringify({ id: assetId, faceValue: Number(newFaceValue) }),
-      });
+        body: JSON.stringify({
+          id: assetId,
+          faceValue: Number(newFaceValue),
+          assetClass: ASSET_CLASS_MAP[newAssetClass] || 'TreasuryBill',
+          issuer: walletAddress,
+          sourceAddress: walletAddress
+        }),
+      }, walletAddress ?? undefined);
 
       const data = await response.json();
-
       if (!response.ok || data.error) {
         throw new Error(data.error || data.details || 'On-chain minting failed.');
       }
 
-      addTelemetryLog(`[LEDGER] RWA Token successfully minted on-chain. Contract binding active!`);
-      addTelemetryLog(`[LEDGER] Transaction Hash: ${data.txHash}`);
-      addTelemetryLog(`[SYSTEM] Compliance policy registered: Exact Match.`);
+      addTelemetryLog('[WALLET] Unsigned transaction prepared. Requesting Freighter signature...');
 
-      // Create new asset object
+      // Phase 2: Sign via Freighter
+      const signedTxResult = await signTransaction(data.unsignedXdr, {
+        networkPassphrase: NETWORK_PASSPHRASE,
+      });
+
+      const signedXdr = typeof signedTxResult === 'string'
+        ? signedTxResult
+        : (signedTxResult as any)?.signedTxXdr;
+
+      if (!signedXdr) {
+        throw new Error('Failed to sign transaction or signature was rejected.');
+      }
+
+      // Submit to Horizon
+      const submitRes = await fetch(`${HORIZON_URL}/transactions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ tx: signedXdr }),
+      });
+
+      const submitData = await submitRes.json();
+      if (!submitRes.ok || submitData.error) {
+        throw new Error(submitData.detail || submitData.title || 'Horizon transaction submission failed');
+      }
+
+      const txHash = submitData.hash;
+      addTelemetryLog(`[LEDGER] RWA Token successfully minted on-chain! Tx: ${txHash}`);
+
       const newAsset: RwaAsset = {
         id: assetId,
         name: newName,
         faceValue: Number(newFaceValue),
         status: 'Pending',
-        txHash: data.txHash || undefined
+        txHash
       };
 
       setAssets(prev => [...prev, newAsset]);
       setSelectedAsset(newAsset);
-      
-      // Reset form fields
+
       setNewName('');
       setNewFaceValue('');
-      
-      // Return to overview dashboard
       setActiveTab('overview');
-      addTelemetryLog(`[SYSTEM] New RWA Asset #${newAsset.id} added to active registry ledger.`);
     } catch (err: any) {
       console.error("Minting error:", err);
       addTelemetryLog(`[ERROR] Tokenization failed: ${err.message || err}`);
@@ -703,7 +679,77 @@ export default function AppDashboard() {
     }
   };
 
-  // Decrypt transaction event handler
+  const resolveEventPayload = async (txHash: string): Promise<{ payload: EncryptedPayload; eventType: string } | null> => {
+    const HORIZON_URL = process.env.NEXT_PUBLIC_HORIZON_URL || 'https://horizon-testnet.stellar.org';
+    const SOROBAN_RPC_URL = process.env.NEXT_PUBLIC_SOROBAN_RPC_URL || 'https://soroban-testnet.stellar.org';
+
+    const horizonRes = await fetch(`${HORIZON_URL}/transactions/${txHash}`);
+    if (!horizonRes.ok) return null;
+    const txInfo = await horizonRes.json();
+    const ledger = txInfo.ledger;
+    if (!ledger) return null;
+
+    const rpcRes = await fetch(SOROBAN_RPC_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'getEvents',
+        params: {
+          startLedger: ledger,
+          filters: [{ type: 'contract', contractIds: [SETTLEMENT_CONTRACT_ID] }]
+        }
+      })
+    });
+    if (!rpcRes.ok) return null;
+    const rpcData = await rpcRes.json();
+    const events = rpcData.result?.events || [];
+    const targetEvent = events.find((ev: any) => ev.txHash === txHash);
+    if (!targetEvent) return null;
+
+    const valueXdr = targetEvent.value;
+    const segments = await extractEventSegments(valueXdr);
+    if (!segments || segments.length < 4) return null;
+
+    return {
+      payload: {
+        ephemeralPublicKeyHex: segments[0],
+        ivHex: segments[1],
+        tagHex: segments[2],
+        ciphertextHex: segments[3]
+      },
+      eventType: targetEvent.type || ''
+    };
+  };
+
+  function extractEventSegments(valueB64: string): Promise<string[]> {
+    return Promise.resolve(() => {
+      const buf = new Uint8Array(
+        atob(valueB64).split('').map(c => c.charCodeAt(0))
+      );
+      const results: string[] = [];
+      let offset = 0;
+      if (buf[offset] === 0x0c) {
+        offset++;
+        const vecLen = (buf[offset++] << 8) | buf[offset++];
+        for (let i = 0; i < vecLen && offset < buf.length; i++) {
+          if (buf[offset] === 0x0a || buf[offset] === 0x0b) {
+            offset++;
+            const bLen = (buf[offset++] << 8) | buf[offset++];
+            results.push(
+              Array.from(buf.slice(offset, offset + bLen))
+                .map(b => b.toString(16).padStart(2, '0'))
+                .join('')
+            );
+            offset += bLen;
+          } else break;
+        }
+      }
+      return results;
+    })();
+  }
+
   const handleDecrypt = async () => {
     if (!decTxHash || !decPrivKey) {
       setDecryptError('Please fill in both fields.');
@@ -717,69 +763,14 @@ export default function AppDashboard() {
     setDecryptedSuccess(null);
 
     try {
-      let eventValue: string | undefined;
-      try {
-        console.log('[Settle] Browser pre-fetching transaction details from Horizon...');
-        const horizonRes = await fetch(`https://horizon-testnet.stellar.org/transactions/${decTxHash}`);
-        if (horizonRes.ok) {
-          const txInfo = await horizonRes.json();
-          const ledger = txInfo.ledger;
-          if (ledger) {
-            console.log(`[Settle] Browser querying Soroban RPC for ledger ${ledger}...`);
-            const rpcPayload = {
-              jsonrpc: '2.0',
-              id: 1,
-              method: 'getEvents',
-              params: {
-                startLedger: ledger,
-                filters: [
-                  {
-                    type: 'contract',
-                    contractIds: [CONTRACT_ID]
-                  }
-                ]
-              }
-            };
-            const rpcRes = await fetch('https://soroban-testnet.stellar.org', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(rpcPayload)
-            });
-            if (rpcRes.ok) {
-              const rpcData = await rpcRes.json();
-              const events = rpcData.result?.events || [];
-              const targetEvent = events.find((ev: any) => ev.txHash === decTxHash);
-              if (targetEvent) {
-                eventValue = targetEvent.value;
-                console.log('[Settle] Browser successfully pre-fetched eventValue!');
-              }
-            }
-          }
-        }
-      } catch (err: any) {
-        console.warn('[Settle] Browser-side event pre-fetch failed, letting backend query:', err.message);
+      const eventResult = await resolveEventPayload(decTxHash);
+      if (!eventResult) {
+        throw new Error('No settlement event found for this transaction hash.');
       }
 
-      const res = await fetch('/api/decrypt', {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          ...authHeaders
-        },
-        body: JSON.stringify({
-          txHash: decTxHash,
-          privateKey: decPrivKey,
-          eventValue
-        })
-      });
-      const data = await res.json();
-
-      if (data.error) {
-        throw new Error(data.error);
-      }
-
-      setDecryptedAmount(data.decryptedAmount);
-      setDecryptedPayload(data.payload);
+      const decrypted = await decryptSettlementClient(eventResult.payload, decPrivKey);
+      setDecryptedAmount(decrypted);
+      setDecryptedPayload(eventResult.payload);
       setDecryptedSuccess(true);
     } catch (err: any) {
       setDecryptError(err.message || 'Decryption failed. Ensure the key matches the transaction.');
@@ -789,7 +780,16 @@ export default function AppDashboard() {
     }
   };
 
-  if (isAuthenticated === null) {
+  // Local initialization state to show brief loading while context resolves
+  const [isInitialized, setIsInitialized] = useState(false);
+  const WALLET_INIT_TIMEOUT_MS = 500;
+
+  useEffect(() => {
+    const timerId = setTimeout(() => setIsInitialized(true), WALLET_INIT_TIMEOUT_MS);
+    return () => clearTimeout(timerId);
+  }, []);
+
+  if (!isInitialized) {
     return (
       <div className="h-screen w-screen bg-[#0A0A0A] flex items-center justify-center font-mono">
         <div className="flex flex-col items-center gap-3">
@@ -869,7 +869,7 @@ export default function AppDashboard() {
               <input 
                 type="text" 
                 readOnly
-                value={typeof window !== 'undefined' ? window.location.origin + "/inspector?viewKey=" + privViewKey : "http://localhost:3000/inspector?viewKey=" + privViewKey}
+                value={typeof window !== 'undefined' ? window.location.origin + "/inspector?pubKey=" + pubViewKey : "http://localhost:3000/inspector?pubKey=" + pubViewKey}
                 className="w-full bg-[#0A0A0A] border border-[#3A3A3A] p-2 text-[10px] text-[#8A8A8A] font-mono focus:outline-none select-all"
               />
             </div>
@@ -969,7 +969,7 @@ export default function AppDashboard() {
         <div className="space-y-4 pt-4 border-t border-[#3A3A3A]">
           <button 
             onClick={() => {
-              sessionStorage.removeItem('lantern_wallet_address');
+              setSessionToken(null);
               window.location.href = '/';
             }}
             className="w-full flex items-center gap-2 text-[10px] text-[#8A8A8A] hover:text-[#F2F2F0] transition-all pl-2 cursor-pointer bg-transparent border-none outline-none font-bold"
@@ -1013,7 +1013,7 @@ export default function AppDashboard() {
             ) : (
               <div className="flex flex-col items-end relative">
                 <Button 
-                  onClick={connectWallet}
+                  onClick={handleConnectWallet}
                   disabled={isConnectingWallet}
                   className="flex items-center gap-1.5 bg-[#1A1A1A] hover:bg-[#3A3A3A] border border-[#3A3A3A] text-[#F2F2F0] text-[10px] px-3.5 py-3 cursor-pointer"
                 >
@@ -1242,7 +1242,7 @@ export default function AppDashboard() {
                             </Button>
                           ) : (
                             <Button
-                              onClick={connectWallet}
+                  onClick={handleConnectWallet}
                               disabled={isConnectingWallet}
                               className="w-full bg-[#F2F2F0] hover:bg-[#8A8A8A] text-[#0A0A0A] text-xs font-bold py-5 cursor-pointer"
                             >

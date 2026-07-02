@@ -1,7 +1,30 @@
 import { NextResponse } from 'next/server';
-import { rpc as StellarRpc, Contract, xdr, TransactionBuilder, Keypair } from '@stellar/stellar-sdk';
+import { rpc as StellarRpc, Contract, xdr, TransactionBuilder, Horizon } from '@stellar/stellar-sdk';
+import crypto from 'crypto';
+import fs from 'fs/promises';
+import path from 'path';
+import { pathToFileURL } from 'url';
 import { withAuth, AuthenticatedRequest } from '@/lib/auth';
-import { SETTLEMENT_CONTRACT_ID, DEPLOYER_SECRET, SOROBAN_RPC_URL, NETWORK_PASSPHRASE } from '@/lib/config';
+import { SETTLEMENT_CONTRACT_ID, SOROBAN_RPC_URL, HORIZON_URL, NETWORK_PASSPHRASE } from '@/lib/config';
+import { cacheInvalidate } from '@/lib/cache';
+
+const CIRCUITS_DIR = path.resolve(process.cwd(), '..', 'circuits');
+const SNARKJS_ENTRY = path.join(CIRCUITS_DIR, 'node_modules', 'snarkjs', 'main.js');
+
+let snarkjsModulePromise: Promise<any> | null = null;
+
+async function loadSnarkjs() {
+  if (!snarkjsModulePromise) {
+    snarkjsModulePromise = import(pathToFileURL(SNARKJS_ENTRY).href);
+  }
+  return snarkjsModulePromise;
+}
+
+async function loadJsonFile<T>(fileName: string): Promise<T> {
+  const filePath = path.join(CIRCUITS_DIR, fileName);
+  const fileText = await fs.readFile(filePath, 'utf8');
+  return JSON.parse(fileText) as T;
+}
 
 // ── INPUT VALIDATION ───────────────────────────────────────────────────────
 function validateAssetId(assetId: any): number {
@@ -46,10 +69,15 @@ function validateEphemeralPublicKey(pubKey: any): string {
 
 function validateHex(str: any, expectedBytes: number): string {
   const hex = String(str).trim();
-  const expectedLen = expectedBytes * 2;
   if (!/^[0-9a-fA-F]+$/.test(hex)) {
     throw new Error(`Invalid hex string: expected hex characters, got ${hex}`);
   }
+
+  if (expectedBytes === 0) {
+    return hex;
+  }
+
+  const expectedLen = expectedBytes * 2;
   if (hex.length !== expectedLen) {
     throw new Error(`Invalid hex length: expected ${expectedLen} chars (${expectedBytes} bytes), got ${hex.length}`);
   }
@@ -149,7 +177,7 @@ function vkToHex(vkJson: VkJson): string {
   return Buffer.from(concat(alpha, beta, gamma, delta, icLen, ...icParts)).toString('hex');
 }
 
-function hexToBytes(hex: string): Uint8Array {
+function hexToBytes(hex: string): Buffer {
   return Buffer.from(hex, 'hex');
 }
 
@@ -158,23 +186,41 @@ function bytesToHex(bytes: Uint8Array): string {
 }
 
 async function generateCustomProof(
-  proofJson: ProofJson,
-  vkJson: VkJson,
-  commitment: string
-): Promise<{ proofHex: string; vkHex: string; commitmentHex: string }> {
+  inputData: Record<string, string>,
+  discountBps?: number
+): Promise<{ proofHex: string; vkHex: string; commitmentHex: string; nPublic: number }> {
   try {
-    const proofHex = proofToHex(proofJson);
+    const snarkjs = await loadSnarkjs();
+    const isDiscounted = discountBps !== undefined && discountBps > 0;
+
+    const wasmPath = isDiscounted
+      ? path.join(CIRCUITS_DIR, 'discount_settlement_js', 'discount_settlement.wasm')
+      : path.join(CIRCUITS_DIR, 'settlement_js', 'settlement.wasm');
+    const zkeyPath = isDiscounted
+      ? path.join(CIRCUITS_DIR, 'discount_settlement_final.zkey')
+      : path.join(CIRCUITS_DIR, 'settlement_final.zkey');
+    const vkFile = isDiscounted ? 'discount_settlement_vk.json' : 'verification_key.json';
+
+    const [proofResult, vkJson] = await Promise.all([
+      snarkjs.groth16.fullProve(inputData, wasmPath, zkeyPath),
+      loadJsonFile<VkJson>(vkFile),
+    ]);
+
+    const proofHex = proofToHex(proofResult.proof as ProofJson);
     const vkHex = vkToHex(vkJson);
-    const commitmentHex = BigInt(commitment).toString(16).padStart(64, '0');
-    
-    const hexToScvBytes = (hex: string) => {
-      return new xdr.ScVal({
-        __unionId: 'bytes',
-        bytes: hexToBytes(hex)
-      });
-    };
-    
-    return { proofHex, vkHex, commitmentHex };
+
+    // Public signals order:
+    //   regular:   [commitment, target_face_value]
+    //   discount:  [target_face_value, discount_bps, commitment]
+    const commitmentIndex = isDiscounted ? 2 : 0;
+    const commitmentSignal = proofResult.publicSignals?.[commitmentIndex];
+    if (!commitmentSignal) {
+      throw new Error('Groth16 prover did not return a commitment public signal');
+    }
+
+    const commitmentHex = BigInt(commitmentSignal).toString(16).padStart(64, '0');
+
+    return { proofHex, vkHex, commitmentHex, nPublic: vkJson.nPublic };
   } catch (err: any) {
     throw new Error(`Failed to generate custom proof: ${err.message}`);
   }
@@ -216,11 +262,13 @@ async function POSTHandler(req: AuthenticatedRequest) {
     }
 
     // ── PHASE 1: Prepare Unsigned Transaction XDR ───────────────────────────
-    const { assetId, amount, ephemeralPublicKey, iv, tag, ciphertext, sourceAddress } = body;
+    const { assetId, amount, ephemeralPublicKey, iv, tag, ciphertext, sourceAddress, discountBps } = body;
 
     if (!assetId || !amount || !ephemeralPublicKey || !iv || !tag || !ciphertext || !sourceAddress) {
       return NextResponse.json({ error: 'Missing required parameters (ensure Freighter address is provided)' }, { status: 400 });
     }
+
+    const validatedDiscountBps = discountBps ? Math.min(Math.max(Math.round(Number(discountBps)), 1), 1500) : 0;
 
     console.log('[Settle] Validating input parameters...');
     const validatedAssetId = validateAssetId(assetId);
@@ -237,7 +285,7 @@ async function POSTHandler(req: AuthenticatedRequest) {
       const rpcServer = new StellarRpc.Server(SOROBAN_RPC_URL);
       const contract = new Contract(SETTLEMENT_CONTRACT_ID);
       const op = contract.call('get_asset', xdr.ScVal.scvU32(validatedAssetId));
-      const sourceAccount = await rpcServer.getAccount(ISSUER);
+      const sourceAccount = await rpcServer.getAccount(validatedSourceAddress);
       const tx = new TransactionBuilder(sourceAccount, {
         fee: '100',
         networkPassphrase: NETWORK_PASSPHRASE,
@@ -274,7 +322,16 @@ async function POSTHandler(req: AuthenticatedRequest) {
             }
           }
         }
-        if (key === 'settled') { try { assetInfo.settled = val.b(); } catch(_) {} }
+        if (key === 'status') {
+        try {
+          const statusVec = val.vec();
+          if (statusVec && statusVec.length > 0) {
+            assetInfo.status = statusVec[0].sym().toString();
+          }
+        } catch(_) {
+          try { assetInfo.status = val.sym().toString(); } catch(__) {}
+        }
+      }
         if (key === 'id')      { try { assetInfo.id = val.u32(); } catch(_) {} }
       }
 
@@ -282,7 +339,8 @@ async function POSTHandler(req: AuthenticatedRequest) {
         throw new Error('face_value missing from contract response map');
       }
       faceValue = String(assetInfo.face_value);
-      console.log(`[Settle][Step0] RPC success — asset ${validatedAssetId}: face_value=${faceValue}, settled=${assetInfo.settled}`);
+      const assetStatus = assetInfo.status || 'Active';
+      console.log(`[Settle][Step0] RPC success — asset ${validatedAssetId}: face_value=${faceValue}, status=${assetStatus}`);
     } catch (rpcErr: any) {
       console.error('[Settle][Step0] Soroban RPC query failed:', rpcErr?.message ?? rpcErr);
       return NextResponse.json({
@@ -291,67 +349,27 @@ async function POSTHandler(req: AuthenticatedRequest) {
       }, { status: 404 });
     }
 
-    console.log(`[Settle] Asset ${validatedAssetId} | amount=${validatedAmount} | realFaceValue=${faceValue} | source=${validatedSourceAddress}`);
+    console.log(`[Settle] Asset ${validatedAssetId}: amount=${validatedAmount}, faceValue=${faceValue}`);
 
     // ── Step 1: Generate fresh random blinding salt ───────────
     const salt = BigInt('0x' + crypto.randomBytes(30).toString('hex')).toString();
-    console.log(`[ZK] Fresh salt generated (first 16 chars): ${salt.substring(0, 16)}...`);
 
     const prefix = sanitizeFilePrefix(`settle_${validatedAssetId}_${Date.now()}`);
 
     // Input JSON for ZK proof — commitment is computed by the circuit
-    const inputData = {
+    const inputData: Record<string, string> = {
       target_face_value: faceValue,
       settlement_amount: validatedAmount,
       blinding_salt: salt
     };
+    if (validatedDiscountBps > 0) {
+      inputData.discount_bps = String(validatedDiscountBps);
+    }
 
     // ── Step 2: Generate ZK proof using pure TypeScript (NO WSL spawnSync) ───────
     console.log('[ZK] Running groth16 proof generation in pure TypeScript...');
 
-    const proofJson: ProofJson = {
-      pi_a: [
-        '20301130357324802412743034187428310373659288947227026232035297432152651419131',
-        '22206386662098290724770180782794235036571748437628623414373797691820903458036'
-      ],
-      pi_b: [
-        ['9536549361111984169946617297458057938863971673022645018037844571266253822906', '11201018232200716241724393508408938025395612006819656548136600272705887061946'],
-        ['7259627874961646765079538785939599208605614025599991130038672220508853143776', '674925283555341203202007129736761094943561486913666472421482651970833253498065'],
-        ['14494692600968121718277311377157011785507875343210435510031629189003280518712', '12140959963427076683073747074427918375683421774042915181242756496485150086363']
-      ],
-      pi_c: [
-        '11965982258039915988915520164275241177048593892668202344538079878894158140372',
-        '8427606173443930388172208641633504881197984051134179484749676074286781382679'
-      ]
-    };
-
-    const vkJson: VkJson = {
-      vk_alpha_1: [
-        '8885210008994432546573566456176637094247645164421890540964070288361518467891',
-        '1203882006328631229449474050930962254508782101668182994667889150189054035745'
-      ],
-      vk_beta_2: [
-        ['2812875989802953248085869189060849952467271546119473846946805462068988782749', '16989059060767971287850340493469980556059537661592781784767054884758336544963'],
-        ['1621005894237219397426442899536747755522179235865146833958832121772855334293001', '5974076214765700443795062585161438819295631512143073607120441469431209734211133'],
-        ['10236425238145587794388434847126780882126816421715285638316012044157393062553829', '7717869301006059302884900594207697540971009607654702491410927740426812365629583']
-      ],
-      vk_gamma_2: [
-        ['3849534120206686226309913792187177118783071897218957620467894763047792667310348', '17737091343211255827040032257761284347913447129307428323881805350870072179575665'],
-        ['13616755802800578649072099678173860039790970433786478808731557314605483238542507', '18184643147072199434984656002175729252423683398840741485532555595423373581272068'],
-        ['10062203396268038210497347675664770043372991247269449986169333853248910943486077', '18599257839116480397516616120373244535079448830085952855217549283803569167929437']
-      ],
-      vk_delta_2: [
-        ['3569645711831957558511552489793272554394152171996830396135988282658650475221745', '11266421500910249414784055973570553040137208176327507890898204734510308554958696'],
-        ['17044949571492229035659351969476475313305556530377277083336801087418075151076979', '3558816928797146611466679110039112079718171387236266342575045972204202353894374'],
-        ['18139527234512118342344328468110759679158794338208079011606727517071817034797143', '16547040305233467185475738126883588032633129887678529743661460523829307409178910']
-      ],
-      IC: [
-        ['11960001217771989858713769190872228978119206790627049923588270131272044061303934', '18881956294869448820967398901969712031048583118686608562548670983729928821294254']
-      ],
-      nPublic: 2
-    };
-
-    const { proofHex, vkHex, commitmentHex } = await generateCustomProof(proofJson, vkJson, '12345678901234567890123456789012345678901234567890123456789012345');
+    const { proofHex, vkHex, commitmentHex } = await generateCustomProof(inputData, validatedDiscountBps);
 
     // ── Step 3: Prepare vectors for on-chain zk proof verification ───
     const proofArgs = {
@@ -360,12 +378,21 @@ async function POSTHandler(req: AuthenticatedRequest) {
       c: proofHex.substring(576, 768)
     };
 
+    // Parse IC entries: vkHex layout = alpha(192) + beta(384) + gamma(384) + delta(384) + icLen(8) + ic[0](192) + ic[1](192) + ...
+    const icLenHex = vkHex.substring(1344, 1352);
+    const icEntryCount = parseInt(icLenHex, 16);
+    const ic: string[] = [];
+    for (let i = 0; i < icEntryCount; i++) {
+      const offset = 1352 + i * 192;
+      ic.push(vkHex.substring(offset, offset + 192));
+    }
+
     const vkArgs = {
       alpha: vkHex.substring(0, 192),
       beta:  vkHex.substring(192, 576),
       gamma: vkHex.substring(576, 960),
       delta: vkHex.substring(960, 1344),
-      ic: [vkHex.substring(1344, 1344 + 192)]
+      ic,
     };
 
     console.log(`[ZK] Pure TS proof generation complete — commitment: ${commitmentHex.substring(0, 32)}...`);
@@ -376,69 +403,67 @@ async function POSTHandler(req: AuthenticatedRequest) {
     // ── Step 5: Build unsigned settle_asset XDR via Soroban SDK (no WSL subprocess) ─
     console.log('[Settle] Building settle_asset XDR via Soroban SDK...');
 
-    const hexToScvBytes = (hex: string) => {
-      return new xdr.ScVal({
-        __unionId: 'bytes',
-        bytes: hexToBytes(hex)
-      });
-    };
-
     const epkHex = validatedEphemeralPublicKey.substring(0, 130);
     const ivHex  = validatedIv.substring(0, 24);
     const tagHex = validatedTag.substring(0, 32);
 
-    const scvProof = new xdr.ScVal({
-      __unionId: 'map',
-      map: Object.entries(proofArgs).map(([key, val]) => {
-        const scvKey = new xdr.ScVal({
-          __unionId: 'symbol',
-          symbol: key
-        });
-        const scvVal = hexToScvBytes(val);
-        return new xdr.ScMapEntry({ key: scvKey, val: scvVal });
-      })
-    });
+    const makeEntry = (key: string, val: xdr.ScVal) =>
+      new xdr.ScMapEntry({
+        key: xdr.ScVal.scvSymbol(key),
+        val,
+      });
 
-    const scvVk = new xdr.ScVal({
-      __unionId: 'map',
-      map: Object.entries(vkArgs).map(([key, val]) => {
-        let scvKey, scvVal;
-        if (key === 'ic') {
-          scvKey = new xdr.ScVal({
-            __unionId: 'symbol',
-            symbol: key
-          });
-          scvVal = new xdr.ScVal({
-            __unionId: 'vec',
-            vec: (val as string[]).map(v => hexToScvBytes(v))
-          });
-        } else {
-          scvKey = new xdr.ScVal({
-            __unionId: 'symbol',
-            symbol: key
-          });
-          scvVal = hexToScvBytes(val as string);
-        }
-        return new xdr.ScMapEntry({ key: scvKey, val: scvVal });
-      })
-    });
+    const sortEntriesByKey = (entries: [string, string][]) =>
+      entries
+        .slice()
+        .sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey));
+
+    const scvProof = xdr.ScVal.scvMap(
+      sortEntriesByKey(Object.entries(proofArgs)).map(([key, val]) => makeEntry(key, xdr.ScVal.scvBytes(hexToBytes(val))))
+    );
+
+    const vkEntries: [string, string | string[]][] = Object.entries(vkArgs);
+    const scvVk = xdr.ScVal.scvMap(
+      vkEntries
+        .slice()
+        .sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey))
+        .map(([key, val]) => {
+          if (key === 'ic') {
+            return makeEntry(
+              key,
+              xdr.ScVal.scvVec((val as string[]).map(v => xdr.ScVal.scvBytes(hexToBytes(v))))
+            );
+          }
+          return makeEntry(key, xdr.ScVal.scvBytes(hexToBytes(val as string)));
+        })
+    );
 
     let unsignedXdr: string;
+    let contractMethod: string;
     try {
       const rpcServer5 = new StellarRpc.Server(SOROBAN_RPC_URL);
       const contract5  = new Contract(SETTLEMENT_CONTRACT_ID);
 
-      const settleOp = contract5.call(
-        'settle_asset',
+      const isDiscountedSettle = validatedDiscountBps > 0;
+      contractMethod = isDiscountedSettle ? 'settle_asset_discounted' : 'settle_asset';
+
+      const settleArgs: xdr.ScVal[] = [
         xdr.ScVal.scvU32(validatedAssetId),
         scvVk,
         scvProof,
-        hexToScvBytes(commitmentHex),
-        hexToScvBytes(epkHex),
-        hexToScvBytes(ivHex),
-        hexToScvBytes(tagHex),
-        hexToScvBytes(validatedCiphertext),
+      ];
+      if (isDiscountedSettle) {
+        settleArgs.push(xdr.ScVal.scvU64(validatedDiscountBps));
+      }
+      settleArgs.push(
+        xdr.ScVal.scvBytes(hexToBytes(commitmentHex)),
+        xdr.ScVal.scvBytes(hexToBytes(epkHex)),
+        xdr.ScVal.scvBytes(hexToBytes(ivHex)),
+        xdr.ScVal.scvBytes(hexToBytes(tagHex)),
+        xdr.ScVal.scvBytes(hexToBytes(validatedCiphertext)),
       );
+
+      const settleOp = contract5.call(contractMethod, ...settleArgs);
 
       const srcAccount = await rpcServer5.getAccount(validatedSourceAddress);
       const buildTx = new TransactionBuilder(srcAccount, {
@@ -459,6 +484,9 @@ async function POSTHandler(req: AuthenticatedRequest) {
       const assembled = StellarRpc.assembleTransaction(buildTx, simResult5).build();
       unsignedXdr = Buffer.from(assembled.toXDR()).toString('base64');
       console.log('[Settle][Step5] SDK assemble success — unsignedXdr length:', unsignedXdr.length);
+
+      // Invalidate the assets list cache so the dashboard reflects the new on-chain state
+      cacheInvalidate('assets');
     } catch (buildErr: any) {
       console.error('[Settle][Step5] SDK build/simulate failed:', buildErr?.message ?? buildErr);
       return NextResponse.json({ error: 'Failed to prepare on-chain transaction parameters', details: buildErr?.message }, { status: 500 });
@@ -467,8 +495,7 @@ async function POSTHandler(req: AuthenticatedRequest) {
     return NextResponse.json({
       success: true,
       unsignedXdr,
-      commitment: commitmentHex,
-      salt: salt.substring(0, 12) + '...'
+      commitment: commitmentHex
     });
 
   } catch (error: any) {

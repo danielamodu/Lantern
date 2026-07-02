@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { CONTRACT_ID, SOROBAN_RPC_URL, NETWORK_PASSPHRASE } from '@/lib/config';
+import { SETTLEMENT_CONTRACT_ID, SOROBAN_RPC_URL, NETWORK_PASSPHRASE } from '@/lib/config';
 import { cacheGet, cacheSet } from '@/lib/cache';
 
 const ASSET_CLASS_LABELS: Record<string, string> = {
@@ -116,7 +116,7 @@ async function fetchEvents(startLedger: number): Promise<any[]> {
         filters: [
           {
             type: 'contract',
-            contractIds: [CONTRACT_ID],
+            contractIds: [SETTLEMENT_CONTRACT_ID],
           },
         ],
         limit: 50,

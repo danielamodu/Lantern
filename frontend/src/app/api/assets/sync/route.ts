@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { rpc as StellarRpc, Contract, xdr, TransactionBuilder, Address } from '@stellar/stellar-sdk';
-import { CONTRACT_ID, ISSUER, SOROBAN_RPC_URL, NETWORK_PASSPHRASE } from '@/lib/config';
+import { SETTLEMENT_CONTRACT_ID, SOROBAN_RPC_URL, NETWORK_PASSPHRASE } from '@/lib/config';
 import { cacheInvalidate } from '@/lib/cache';
 
 export async function POST(request: Request) {
@@ -11,15 +11,14 @@ export async function POST(request: Request) {
     }
 
     const rpcServer = new StellarRpc.Server(SOROBAN_RPC_URL);
-    const contract = new Contract(CONTRACT_ID);
+    const contract = new Contract(SETTLEMENT_CONTRACT_ID);
     const results: Record<number, { faceValue: number, status: string, assetClass: string, maturityTimestamp: number, couponBps: number, exists: boolean }> = {};
 
-    let sourceAccount: any;
+    let sourceAccount;
     try {
-      sourceAccount = await rpcServer.getAccount(ISSUER);
+      sourceAccount = await rpcServer.getAccount('GCTD7WUJYYE2FEGQ4IRHIASGL75MQFBZGTXRQGHJJVXBY73TRKHWK4J4');
     } catch {
-      await fetch(`https://friendbot.stellar.org/?addr=${ISSUER}`);
-      sourceAccount = await rpcServer.getAccount(ISSUER);
+      return NextResponse.json({ error: 'Query account not fundable on this network' }, { status: 500 });
     }
 
     for (const id of ids) {

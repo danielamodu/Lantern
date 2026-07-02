@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { CONTRACT_ID, ISSUER, SOROBAN_RPC_URL, NETWORK_PASSPHRASE } from '@/lib/config';
+import { SETTLEMENT_CONTRACT_ID, SOROBAN_RPC_URL, NETWORK_PASSPHRASE } from '@/lib/config';
 import { cacheGet, cacheSet, cacheInvalidate } from '@/lib/cache';
 
 const ASSET_CLASS_LABELS: Record<string, string> = {
@@ -74,7 +74,7 @@ async function fetchAllMintEvents(startLedger: number): Promise<Map<number, { as
         method: 'getEvents',
         params: {
           startLedger: ledger,
-          filters: [{ type: 'contract', contractIds: [CONTRACT_ID] }],
+          filters: [{ type: 'contract', contractIds: [SETTLEMENT_CONTRACT_ID] }],
           limit: 200,
           ...(cursor ? { cursor } : {}),
         },
@@ -139,14 +139,13 @@ async function getAssetFromContract(assetId: number): Promise<{
   }));
 
   const rpcServer = new rpc.Server(SOROBAN_RPC_URL);
-  const contract = new rpc.Contract(CONTRACT_ID);
+  const contract = new rpc.Contract(SETTLEMENT_CONTRACT_ID);
 
-  let sourceAccount: any;
+  let sourceAccount;
   try {
-    sourceAccount = await rpcServer.getAccount(ISSUER);
+    sourceAccount = await rpcServer.getAccount('GCTD7WUJYYE2FEGQ4IRHIASGL75MQFBZGTXRQGHJJVXBY73TRKHWK4J4');
   } catch {
-    await fetch(`https://friendbot.stellar.org/?addr=${ISSUER}`);
-    sourceAccount = await rpcServer.getAccount(ISSUER);
+    return NextResponse.json({ error: 'Query account not available on this network' }, { status: 500 });
   }
 
   const op = contract.call('get_asset', rpc.xdr.ScVal.scvU32(assetId));
@@ -227,6 +226,7 @@ export async function GET() {
       const label = ASSET_CLASS_LABELS[assetClass] || assetClass;
       const status = onChain?.status === 'Redeemed' ? 'Redeemed'
         : onChain?.status === 'Settled' ? 'Settled'
+        : onChain?.status === 'Active' ? 'Active'
         : 'Pending';
 
       let maturityDate = '';

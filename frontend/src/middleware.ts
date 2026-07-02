@@ -32,7 +32,7 @@ export function middleware(request: NextRequest) {
   const ip = getClientIp(request);
 
   if (pathname.startsWith('/api/')) {
-    const readOnlyRoutes = ['/api/events', '/api/assets/list', '/api/decrypt', '/api/generate-keys'];
+    const readOnlyRoutes = ['/api/events', '/api/assets/list']; // decrypt removed (deleted), generate-keys is write ops
     const isReadOnly = readOnlyRoutes.some(route => pathname.startsWith(route));
     const maxRequests = isReadOnly ? RATE_LIMIT_MAX_READS : RATE_LIMIT_MAX_WRITES;
 

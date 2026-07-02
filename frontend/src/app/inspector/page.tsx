@@ -23,6 +23,8 @@ import {
 } from 'lucide-react';
 import { Button } from "@/components/ui/button";
 import { CiphertextReveal } from '../app/CiphertextReveal';
+import { useWallet } from '@/lib/WalletContext';
+import { decryptSettlementClient, EncryptedPayload } from '@/utils/clientCrypto';
 
 interface InspectorTx {
   txHash: string;
@@ -57,6 +59,7 @@ const FALLBACK_TXS: InspectorTx[] = [
 ];
 
 export default function LedgerInspector() {
+  const { address: walletAddress, hasCheckedConnection, isConnected } = useWallet();
   const [txs, setTxs] = useState<InspectorTx[]>(FALLBACK_TXS);
   const [viewKey, setViewKey] = useState('');
   const [isDecrypting, setIsDecrypting] = useState(false);
@@ -67,21 +70,18 @@ export default function LedgerInspector() {
 
   // Mobile menu header toggles
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const [walletAddress, setWalletAddress] = useState<string | null>(null);
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
+  const isAuthenticated = hasCheckedConnection && isConnected;
 
-  // Check wallet connection from sessionStorage on mount
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const savedAddress = sessionStorage.getItem('lantern_wallet_address');
-      if (!savedAddress) {
-        window.location.href = '/login';
-      } else {
-        setWalletAddress(savedAddress);
-        setIsAuthenticated(true);
-      }
+    if (!hasCheckedConnection) {
+      return;
     }
-  }, []);
+
+    if (!isConnected) {
+      window.location.href = '/login';
+      return;
+    }
+  }, [hasCheckedConnection, isConnected]);
 
   useEffect(() => {
     const fetchEvents = async () => {
@@ -105,17 +105,6 @@ export default function LedgerInspector() {
     fetchEvents();
   }, []);
 
-  // Check URL query parameters for pre-filled view key (Deep Link sharing)
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const params = new URLSearchParams(window.location.search);
-      const keyParam = params.get('viewKey') || params.get('key');
-      if (keyParam) {
-        setViewKey(keyParam);
-      }
-    }
-  }, []);
-
   const isDecrypted = viewKey.trim().length >= 10 && Object.keys(decryptedValues).length > 0;
 
   const handleDecryptToggle = async () => {
@@ -128,8 +117,8 @@ export default function LedgerInspector() {
       setDecryptionError('Please enter an Auditor Private View Key to decrypt.');
       return;
     }
-    if (viewKey.length < 10) {
-      setDecryptionError('Invalid Private View Key size. Must be a valid Private Key.');
+    if (viewKey.length < 32) {
+      setDecryptionError('Invalid Private View Key length. Must be at least 32 hex characters.');
       return;
     }
 
@@ -140,16 +129,17 @@ export default function LedgerInspector() {
     let anySuccess = false;
 
     for (const tx of txs) {
-      if (!tx.txHash || tx.txHash === '—') continue;
+      if (!tx.txHash || tx.txHash === '—' || tx.iv === '') continue;
       try {
-        const res = await fetch('/api/decrypt', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ txHash: tx.txHash, privateKey: viewKey.trim() }),
-        });
-        const data = await res.json();
-        if (data.decryptedAmount) {
-          results[tx.txHash] = data.decryptedAmount;
+        const payload: EncryptedPayload = {
+          ephemeralPublicKeyHex: tx.ephemeralKey,
+          ivHex: tx.iv,
+          tagHex: tx.tag,
+          ciphertextHex: tx.ciphertext
+        };
+        const decrypted = await decryptSettlementClient(payload, viewKey.trim());
+        if (decrypted) {
+          results[tx.txHash] = decrypted;
           anySuccess = true;
         }
       } catch {}
